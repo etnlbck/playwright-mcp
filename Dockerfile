@@ -1,7 +1,7 @@
-FROM node:18-slim
+FROM node:22-slim
 
 # Install system dependencies for Playwright
-RUN apt-get update && apt-get install -y \
+RUN apt-get update && apt-get install -y --no-install-recommends \
     wget \
     gnupg \
     ca-certificates \
@@ -32,6 +32,7 @@ RUN apt-get update && apt-get install -y \
     libdrm2 \
     libgbm1 \
     libxshmfence1 \
+    && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
@@ -40,8 +41,8 @@ WORKDIR /app
 COPY package*.json ./
 COPY tsconfig.json ./
 
-# Install dependencies
-RUN npm ci --only=production
+# Install ALL dependencies (including dev dependencies for build)
+RUN npm ci
 
 # Install Playwright browsers
 RUN npx playwright install chromium
@@ -52,6 +53,10 @@ COPY src/ ./src/
 
 # Build TypeScript
 RUN npm run build
+
+# Remove dev dependencies and source code to keep production image lean
+RUN npm prune --production
+RUN rm -rf src/ tsconfig.json
 
 # Create non-root user
 RUN groupadd -r playwright && useradd -r -g playwright -G audio,video playwright \
