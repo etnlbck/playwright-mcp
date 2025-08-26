@@ -1,0 +1,23 @@
+[build]
+builder = "nixpacks"
+
+[deploy]
+healthcheckPath = "/health"
+healthcheckTimeout = 30
+restartPolicyType = "on_failure"
+
+[[services]]
+name = "playwright-mcp-server"
+
+[services.healthcheck]
+path = "/health"
+timeout = 30
+interval = 10
+
+[[services.variables]]
+MODE = "http"
+PORT = "${{ PORT }}"
+
+[services.resources]
+memory = 512
+cpu = 0.25
