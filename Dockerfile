@@ -42,7 +42,7 @@ COPY package*.json ./
 COPY tsconfig.json ./
 
 # Install ALL dependencies (including dev dependencies for build)
-RUN npm ci
+RUN npm install
 
 # Install Playwright browsers
 RUN npx playwright install chromium
