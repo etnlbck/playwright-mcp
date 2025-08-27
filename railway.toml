@@ -5,6 +5,7 @@ builder = "nixpacks"
 healthcheckPath = "/health"
 healthcheckTimeout = 120
 restartPolicyType = "on_failure"
+startCommand = "npm run start:debug"
 
 [variables]
 MODE = "http"
