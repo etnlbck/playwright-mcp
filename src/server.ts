@@ -67,10 +67,21 @@ class PlaywrightMCPServer {
 
   private async ensureBrowser(): Promise<void> {
     if (!this.browser) {
+      console.log("🔧 Launching Chromium browser...");
+      const startTime = Date.now();
       this.browser = await chromium.launch({
         headless: true,
-        args: ["--no-sandbox", "--disable-setuid-sandbox"],
+        args: [
+          "--no-sandbox", 
+          "--disable-setuid-sandbox",
+          "--disable-dev-shm-usage",
+          "--disable-gpu",
+          "--disable-web-security",
+          "--disable-features=VizDisplayCompositor"
+        ],
       });
+      const launchTime = Date.now() - startTime;
+      console.log(`✅ Chromium browser launched in ${launchTime}ms`);
     }
   }
 

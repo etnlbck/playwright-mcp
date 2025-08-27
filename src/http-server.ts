@@ -32,7 +32,37 @@ class HTTPPlaywrightServer {
   private setupRoutes(): void {
     // Health check
     this.app.get("/health", (req, res) => {
-      res.json({ status: "ok", timestamp: new Date().toISOString() });
+      console.log("Health check requested");
+      res.json({ 
+        status: "ok", 
+        timestamp: new Date().toISOString(),
+        uptime: process.uptime(),
+        memory: process.memoryUsage(),
+        version: "1.0.0"
+      });
+    });
+
+    // Ready check - ensures browser is initialized
+    this.app.get("/ready", async (req, res) => {
+      try {
+        console.log("Ready check requested - initializing browser...");
+        const startTime = Date.now();
+        await this.mcpServer.callTool("get_url", {});
+        const initTime = Date.now() - startTime;
+        console.log(`✅ Browser ready check completed in ${initTime}ms`);
+        res.json({ 
+          status: "ready", 
+          timestamp: new Date().toISOString(),
+          browserInitTime: initTime
+        });
+      } catch (error) {
+        console.error("❌ Browser ready check failed:", error);
+        res.status(503).json({ 
+          status: "not_ready", 
+          error: error instanceof Error ? error.message : String(error),
+          timestamp: new Date().toISOString()
+        });
+      }
     });
 
     // List available tools
@@ -120,11 +150,26 @@ class HTTPPlaywrightServer {
   }
 
   async start(): Promise<void> {
-    return new Promise((resolve) => {
-      this.app.listen(this.port, "0.0.0.0", () => {
-        console.log(`Playwright MCP HTTP Server running on port ${this.port}`);
+    return new Promise((resolve, reject) => {
+      console.log(`Starting HTTP server on port ${this.port}...`);
+      console.log(`Environment: NODE_ENV=${process.env["NODE_ENV"]}, MODE=${process.env["MODE"]}`);
+      console.log(`Memory limit: ${Math.round(process.memoryUsage().heapTotal / 1024 / 1024)}MB`);
+      
+      const server = this.app.listen(this.port, "0.0.0.0", () => {
+        console.log(`✅ Playwright MCP HTTP Server running on port ${this.port}`);
+        console.log(`Health check available at: http://0.0.0.0:${this.port}/health`);
         resolve();
       });
+
+      server.on('error', (error) => {
+        console.error('❌ Server failed to start:', error);
+        reject(error);
+      });
+
+      // Add timeout for server startup
+      setTimeout(() => {
+        console.log('⚠️ Server startup timeout - this may indicate issues with port binding');
+      }, 10000);
     });
   }
 }
