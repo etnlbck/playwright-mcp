@@ -4,8 +4,5 @@ NIXPACKS_NODE_VERSION = "22"
 [phases.build]
 cmds = ["npm ci", "npm run build"]
 
-[phases.start]
-cmd = "npm start"
-
 [start]
 cmd = "npm start"

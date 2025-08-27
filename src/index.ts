@@ -3,9 +3,16 @@
 import { PlaywrightMCPServer } from "./server.js";
 import { HTTPPlaywrightServer } from "./http-server.js";
 
-const mode = process.env["MODE"] || "stdio";
+// Determine mode - if Railway provides PORT, we should be in HTTP mode
 const portEnv = process.env["PORT"];
+const explicitMode = process.env["MODE"];
+const mode = explicitMode || (portEnv ? "http" : "stdio");
 const port = portEnv ? Number.parseInt(portEnv, 10) : 3000;
+
+console.log(`🔍 Mode Detection:`);
+console.log(`  PORT env: "${portEnv}"`);
+console.log(`  MODE env: "${explicitMode}"`);
+console.log(`  Detected mode: "${mode}"`);
 
 // Validate port
 if (isNaN(port) || port < 1 || port > 65535) {
@@ -20,6 +27,15 @@ async function main() {
   console.log(`All PORT-related env vars:`, Object.keys(process.env).filter(k => k.includes('PORT')));
   console.log(`Node version: ${process.version}`);
   console.log(`Platform: ${process.platform} ${process.arch}`);
+
+  // Safety check: If we have a PORT but mode isn't http, something's wrong
+  if (portEnv && mode !== "http") {
+    console.warn(`⚠️ WARNING: PORT provided (${portEnv}) but mode is ${mode}. Forcing HTTP mode for Railway compatibility.`);
+    const httpServer = new HTTPPlaywrightServer(port);
+    await httpServer.start();
+    console.log(`🎉 Server successfully started in forced HTTP mode on port ${port}`);
+    return;
+  }
 
   if (mode === "http") {
     console.log("Starting Playwright MCP Server in HTTP mode...");
@@ -38,6 +54,7 @@ async function main() {
     }
   } else {
     console.log("Starting Playwright MCP Server in stdio mode...");
+    console.log("⚠️ Note: stdio mode has no HTTP endpoints - health checks will not work");
     try {
       const server = new PlaywrightMCPServer();
       await server.run();
