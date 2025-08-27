@@ -48,6 +48,7 @@ class PlaywrightMCPServer {
   private server: Server;
   private browser: Browser | null = null;
   private page: Page | null = null;
+  private browserAvailable: boolean = true;
 
   constructor() {
     this.server = new Server(
@@ -68,24 +69,48 @@ class PlaywrightMCPServer {
   private async ensureBrowser(): Promise<void> {
     if (!this.browser) {
       console.log("🔧 Launching Chromium browser...");
+      console.log(`Platform: ${process.platform}, Arch: ${process.arch}`);
+      console.log(`Memory: ${Math.round(process.memoryUsage().heapTotal / 1024 / 1024)}MB available`);
+      
       const startTime = Date.now();
-      this.browser = await chromium.launch({
-        headless: true,
-        args: [
-          "--no-sandbox", 
-          "--disable-setuid-sandbox",
-          "--disable-dev-shm-usage",
-          "--disable-gpu",
-          "--disable-web-security",
-          "--disable-features=VizDisplayCompositor"
-        ],
-      });
-      const launchTime = Date.now() - startTime;
-      console.log(`✅ Chromium browser launched in ${launchTime}ms`);
+      try {
+        this.browser = await chromium.launch({
+          headless: true,
+          args: [
+            "--no-sandbox", 
+            "--disable-setuid-sandbox",
+            "--disable-dev-shm-usage",
+            "--disable-gpu",
+            "--disable-web-security",
+            "--disable-features=VizDisplayCompositor",
+            "--disable-background-timer-throttling",
+            "--disable-backgrounding-occluded-windows",
+            "--disable-renderer-backgrounding",
+            "--disable-extensions",
+            "--disable-plugins",
+            "--disable-default-apps",
+            "--no-first-run",
+            "--no-default-browser-check",
+            "--disable-background-networking",
+            "--disable-sync"
+          ],
+        });
+        const launchTime = Date.now() - startTime;
+        console.log(`✅ Chromium browser launched successfully in ${launchTime}ms`);
+      } catch (error) {
+        console.error("❌ Failed to launch Chromium browser:", error);
+        console.error("This might be due to missing system dependencies or insufficient resources");
+        console.warn("⚠️ Browser functionality will be disabled, but server will continue running");
+        this.browserAvailable = false;
+        return;
+      }
     }
   }
 
   private async ensurePage(): Promise<Page> {
+    if (!this.browserAvailable) {
+      throw new Error("Browser is not available - server running in degraded mode");
+    }
     await this.ensureBrowser();
     if (!this.page && this.browser) {
       this.page = await this.browser.newPage();

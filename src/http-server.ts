@@ -30,15 +30,21 @@ class HTTPPlaywrightServer {
   }
 
   private setupRoutes(): void {
+    // Simple ping endpoint
+    this.app.get("/ping", (req, res) => {
+      res.status(200).send("pong");
+    });
+
     // Health check
     this.app.get("/health", (req, res) => {
       console.log("Health check requested");
-      res.json({ 
+      res.status(200).json({ 
         status: "ok", 
         timestamp: new Date().toISOString(),
         uptime: process.uptime(),
         memory: process.memoryUsage(),
-        version: "1.0.0"
+        version: "1.0.0",
+        server: "running"
       });
     });
 
