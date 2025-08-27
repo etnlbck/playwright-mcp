@@ -3,8 +3,8 @@
 import { PlaywrightMCPServer } from "./server.js";
 import { HTTPPlaywrightServer } from "./http-server.js";
 
-const mode = process.env.MODE || "stdio";
-const port = parseInt(process.env.PORT || "3000", 10);
+const mode = process.env["MODE"] || "stdio";
+const port = Number.parseInt(process.env["PORT"] || "3000", 10);
 
 async function main() {
   if (mode === "http") {

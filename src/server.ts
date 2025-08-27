@@ -6,7 +6,7 @@ import {
   ListToolsRequestSchema,
   McpError,
 } from "@modelcontextprotocol/sdk/types.js";
-import { Browser, chromium, Page } from "playwright";
+import { chromium, type Browser, type Page, type PageScreenshotOptions } from "playwright";
 import { z } from "zod";
 
 const NavigateArgsSchema = z.object({
@@ -79,7 +79,10 @@ class PlaywrightMCPServer {
     if (!this.page && this.browser) {
       this.page = await this.browser.newPage();
     }
-    return this.page!;
+    if (!this.page) {
+      throw new Error("Failed to create page");
+    }
+    return this.page;
   }
 
   private setupToolHandlers(): void {
@@ -196,7 +199,8 @@ class PlaywrightMCPServer {
           case "navigate": {
             const { url, waitUntil = "load", timeout } = NavigateArgsSchema.parse(args);
             const page = await this.ensurePage();
-            await page.goto(url, { waitUntil, timeout });
+            const gotoOptions = timeout !== undefined ? { waitUntil, timeout } : { waitUntil };
+            await page.goto(url, gotoOptions);
             return {
               content: [{ type: "text", text: `Navigated to ${url}` }],
             };
@@ -205,11 +209,11 @@ class PlaywrightMCPServer {
           case "screenshot": {
             const { fullPage = false, quality, type = "png" } = ScreenshotArgsSchema.parse(args);
             const page = await this.ensurePage();
-            const screenshot = await page.screenshot({
-              fullPage,
-              quality: type === "jpeg" ? quality : undefined,
-              type,
-            });
+            const screenshotOptions: PageScreenshotOptions = { fullPage, type };
+            if (type === "jpeg" && quality !== undefined) {
+              screenshotOptions.quality = quality;
+            }
+            const screenshot = await page.screenshot(screenshotOptions);
             return {
               content: [
                 {
@@ -237,21 +241,21 @@ class PlaywrightMCPServer {
               return {
                 content: [{ type: "text", text: JSON.stringify(results, null, 2) }],
               };
-            } else {
-              const element = page.locator(selector);
-              const value = attribute
-                ? await element.getAttribute(attribute)
-                : await element.textContent();
-              return {
-                content: [{ type: "text", text: value || "" }],
-              };
             }
+            const element = page.locator(selector);
+            const value = attribute
+              ? await element.getAttribute(attribute)
+              : await element.textContent();
+            return {
+              content: [{ type: "text", text: value || "" }],
+            };
           }
 
           case "click": {
             const { selector, timeout } = ClickArgsSchema.parse(args);
             const page = await this.ensurePage();
-            await page.locator(selector).click({ timeout });
+            const clickOptions = timeout !== undefined ? { timeout } : {};
+            await page.locator(selector).click(clickOptions);
             return {
               content: [{ type: "text", text: `Clicked element: ${selector}` }],
             };
@@ -260,9 +264,10 @@ class PlaywrightMCPServer {
           case "type": {
             const { selector, text, delay } = TypeArgsSchema.parse(args);
             const page = await this.ensurePage();
-            await page.locator(selector).fill(text);
-            if (delay) {
+            if (delay !== undefined) {
               await page.locator(selector).type(text, { delay });
+            } else {
+              await page.locator(selector).fill(text);
             }
             return {
               content: [{ type: "text", text: `Typed "${text}" into ${selector}` }],
@@ -273,16 +278,16 @@ class PlaywrightMCPServer {
             const { selector, timeout, state = "visible" } = WaitForArgsSchema.parse(args);
             const page = await this.ensurePage();
             if (selector) {
-              await page.locator(selector).waitFor({ state, timeout });
+              const waitOptions = timeout !== undefined ? { state, timeout } : { state };
+              await page.locator(selector).waitFor(waitOptions);
               return {
                 content: [{ type: "text", text: `Waited for ${selector} to be ${state}` }],
               };
-            } else {
-              await page.waitForTimeout(timeout || 1000);
-              return {
-                content: [{ type: "text", text: `Waited for ${timeout || 1000}ms` }],
-              };
             }
+            await page.waitForTimeout(timeout || 1000);
+            return {
+              content: [{ type: "text", text: `Waited for ${timeout || 1000}ms` }],
+            };
           }
 
           case "get_url": {
@@ -335,6 +340,238 @@ class PlaywrightMCPServer {
       }
       process.exit(0);
     });
+  }
+
+  async listTools(): Promise<{tools: Array<{name: string; description: string; inputSchema: object}>}> {
+    return {
+      tools: [
+        {
+          name: "navigate",
+          description: "Navigate to a URL",
+          inputSchema: {
+            type: "object",
+            properties: {
+              url: { type: "string", description: "URL to navigate to" },
+              waitUntil: { 
+                type: "string", 
+                enum: ["load", "domcontentloaded", "networkidle"],
+                description: "Wait until condition is met"
+              },
+              timeout: { type: "number", description: "Timeout in milliseconds" },
+            },
+            required: ["url"],
+          },
+        },
+        {
+          name: "screenshot",
+          description: "Take a screenshot of the current page",
+          inputSchema: {
+            type: "object",
+            properties: {
+              fullPage: { type: "boolean", description: "Capture full page" },
+              quality: { type: "number", minimum: 0, maximum: 100, description: "JPEG quality" },
+              type: { type: "string", enum: ["png", "jpeg"], description: "Image format" },
+            },
+          },
+        },
+        {
+          name: "scrape",
+          description: "Extract text or attributes from elements",
+          inputSchema: {
+            type: "object",
+            properties: {
+              selector: { type: "string", description: "CSS selector (optional, defaults to body)" },
+              attribute: { type: "string", description: "Attribute to extract (optional, defaults to textContent)" },
+              multiple: { type: "boolean", description: "Extract from multiple elements" },
+            },
+          },
+        },
+        {
+          name: "click",
+          description: "Click on an element",
+          inputSchema: {
+            type: "object",
+            properties: {
+              selector: { type: "string", description: "CSS selector of element to click" },
+              timeout: { type: "number", description: "Timeout in milliseconds" },
+            },
+            required: ["selector"],
+          },
+        },
+        {
+          name: "type",
+          description: "Type text into an element",
+          inputSchema: {
+            type: "object",
+            properties: {
+              selector: { type: "string", description: "CSS selector of input element" },
+              text: { type: "string", description: "Text to type" },
+              delay: { type: "number", description: "Delay between keystrokes in milliseconds" },
+            },
+            required: ["selector", "text"],
+          },
+        },
+        {
+          name: "wait_for",
+          description: "Wait for an element or condition",
+          inputSchema: {
+            type: "object",
+            properties: {
+              selector: { type: "string", description: "CSS selector to wait for" },
+              timeout: { type: "number", description: "Timeout in milliseconds" },
+              state: { 
+                type: "string", 
+                enum: ["attached", "detached", "visible", "hidden"],
+                description: "Element state to wait for"
+              },
+            },
+          },
+        },
+        {
+          name: "get_url",
+          description: "Get the current page URL",
+          inputSchema: {
+            type: "object",
+            properties: {},
+          },
+        },
+        {
+          name: "close_browser",
+          description: "Close the browser instance",
+          inputSchema: {
+            type: "object",
+            properties: {},
+          },
+        },
+      ],
+    };
+  }
+
+  async callTool(name: string, args: unknown): Promise<{content: Array<{type: string; text?: string; data?: string; mimeType?: string}>}> {
+    try {
+      switch (name) {
+        case "navigate": {
+          const { url, waitUntil = "load", timeout } = NavigateArgsSchema.parse(args);
+          const page = await this.ensurePage();
+          const gotoOptions = timeout !== undefined ? { waitUntil, timeout } : { waitUntil };
+          await page.goto(url, gotoOptions);
+          return {
+            content: [{ type: "text", text: `Navigated to ${url}` }],
+          };
+        }
+
+        case "screenshot": {
+          const { fullPage = false, quality, type = "png" } = ScreenshotArgsSchema.parse(args);
+          const page = await this.ensurePage();
+          const screenshotOptions: PageScreenshotOptions = { fullPage, type };
+          if (type === "jpeg" && quality !== undefined) {
+            screenshotOptions.quality = quality;
+          }
+          const screenshot = await page.screenshot(screenshotOptions);
+          return {
+            content: [
+              {
+                type: "image",
+                data: screenshot.toString("base64"),
+                mimeType: `image/${type}`,
+              },
+            ],
+          };
+        }
+
+        case "scrape": {
+          const { selector = "body", attribute, multiple = false } = ScrapeArgsSchema.parse(args);
+          const page = await this.ensurePage();
+          
+          if (multiple) {
+            const elements = await page.locator(selector).all();
+            const results = [];
+            for (const element of elements) {
+              const value = attribute 
+                ? await element.getAttribute(attribute)
+                : await element.textContent();
+              results.push(value);
+            }
+            return {
+              content: [{ type: "text", text: JSON.stringify(results, null, 2) }],
+            };
+          }
+          const element = page.locator(selector);
+          const value = attribute
+            ? await element.getAttribute(attribute)
+            : await element.textContent();
+          return {
+            content: [{ type: "text", text: value || "" }],
+          };
+        }
+
+        case "click": {
+          const { selector, timeout } = ClickArgsSchema.parse(args);
+          const page = await this.ensurePage();
+          const clickOptions = timeout !== undefined ? { timeout } : {};
+          await page.locator(selector).click(clickOptions);
+          return {
+            content: [{ type: "text", text: `Clicked element: ${selector}` }],
+          };
+        }
+
+        case "type": {
+          const { selector, text, delay } = TypeArgsSchema.parse(args);
+          const page = await this.ensurePage();
+          if (delay !== undefined) {
+            await page.locator(selector).type(text, { delay });
+          } else {
+            await page.locator(selector).fill(text);
+          }
+          return {
+            content: [{ type: "text", text: `Typed "${text}" into ${selector}` }],
+          };
+        }
+
+        case "wait_for": {
+          const { selector, timeout, state = "visible" } = WaitForArgsSchema.parse(args);
+          const page = await this.ensurePage();
+          if (selector) {
+            const waitOptions = timeout !== undefined ? { state, timeout } : { state };
+            await page.locator(selector).waitFor(waitOptions);
+            return {
+              content: [{ type: "text", text: `Waited for ${selector} to be ${state}` }],
+            };
+          }
+          await page.waitForTimeout(timeout || 1000);
+          return {
+            content: [{ type: "text", text: `Waited for ${timeout || 1000}ms` }],
+          };
+        }
+
+        case "get_url": {
+          const page = await this.ensurePage();
+          const url = page.url();
+          return {
+            content: [{ type: "text", text: url }],
+          };
+        }
+
+        case "close_browser": {
+          if (this.browser) {
+            await this.browser.close();
+            this.browser = null;
+            this.page = null;
+          }
+          return {
+            content: [{ type: "text", text: "Browser closed" }],
+          };
+        }
+
+        default:
+          throw new Error(`Unknown tool: ${name}`);
+      }
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        throw new Error(`Invalid arguments: ${error.message}`);
+      }
+      throw new Error(`Tool execution failed: ${error instanceof Error ? error.message : String(error)}`);
+    }
   }
 }
 

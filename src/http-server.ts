@@ -38,10 +38,7 @@ class HTTPPlaywrightServer {
     // List available tools
     this.app.get("/tools", async (req, res) => {
       try {
-        const tools = await this.mcpServer["server"].request(
-          { method: "tools/list" },
-          { method: "tools/list" }
-        );
+        const tools = await this.mcpServer.listTools();
         res.json(tools);
       } catch (error) {
         res.status(500).json({
@@ -69,22 +66,7 @@ class HTTPPlaywrightServer {
         res.write(`data: ${JSON.stringify({ type: "status", message: "Starting execution" })}\\n\\n`);
 
         try {
-          const result = await this.mcpServer["server"].request(
-            {
-              method: "tools/call",
-              params: {
-                name: tool,
-                arguments: args || {},
-              },
-            },
-            {
-              method: "tools/call",
-              params: {
-                name: tool,
-                arguments: args || {},
-              },
-            }
-          );
+          const result = await this.mcpServer.callTool(tool, args || {});
 
           // Send result
           res.write(`data: ${JSON.stringify({ type: "result", data: result })}\\n\\n`);
@@ -118,22 +100,7 @@ class HTTPPlaywrightServer {
       try {
         const { tool, arguments: args } = ToolCallSchema.parse(req.body);
 
-        const result = await this.mcpServer["server"].request(
-          {
-            method: "tools/call",
-            params: {
-              name: tool,
-              arguments: args || {},
-            },
-          },
-          {
-            method: "tools/call",
-            params: {
-              name: tool,
-              arguments: args || {},
-            },
-          }
-        );
+        const result = await this.mcpServer.callTool(tool, args || {});
 
         res.json(result);
       } catch (error) {
