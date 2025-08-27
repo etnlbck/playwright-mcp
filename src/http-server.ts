@@ -80,7 +80,53 @@ class HTTPPlaywrightServer {
       }
     });
 
-    // List available tools
+    // MCP-compatible endpoint for n8n
+    this.app.post("/mcp", async (req, res) => {
+      try {
+        console.log("MCP request received:", req.body);
+        
+        const { method, params } = req.body;
+        
+        if (method === "tools/list") {
+          const tools = await this.mcpServer.listTools();
+          res.json({
+            jsonrpc: "2.0",
+            id: req.body.id || 1,
+            result: tools
+          });
+        } else if (method === "tools/call") {
+          const { name, arguments: args } = params;
+          const result = await this.mcpServer.callTool(name, args);
+          res.json({
+            jsonrpc: "2.0", 
+            id: req.body.id || 1,
+            result: result
+          });
+        } else {
+          res.status(400).json({
+            jsonrpc: "2.0",
+            id: req.body.id || 1,
+            error: {
+              code: -32601,
+              message: "Method not found"
+            }
+          });
+        }
+      } catch (error) {
+        console.error("MCP request error:", error);
+        res.status(500).json({
+          jsonrpc: "2.0",
+          id: req.body.id || 1,
+          error: {
+            code: -32603,
+            message: "Internal error",
+            data: error instanceof Error ? error.message : String(error)
+          }
+        });
+      }
+    });
+
+    // List available tools (REST endpoint)
     this.app.get("/tools", async (req, res) => {
       try {
         const tools = await this.mcpServer.listTools();
