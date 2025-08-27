@@ -4,7 +4,14 @@ import { PlaywrightMCPServer } from "./server.js";
 import { HTTPPlaywrightServer } from "./http-server.js";
 
 const mode = process.env["MODE"] || "stdio";
-const port = Number.parseInt(process.env["PORT"] || "3000", 10);
+const portEnv = process.env["PORT"];
+const port = portEnv ? Number.parseInt(portEnv, 10) : 3000;
+
+// Validate port
+if (isNaN(port) || port < 1 || port > 65535) {
+  console.error(`❌ Invalid port: ${portEnv} (parsed as ${port})`);
+  process.exit(1);
+}
 
 async function main() {
   console.log(`🚀 Starting Playwright MCP Server...`);
@@ -14,12 +21,23 @@ async function main() {
 
   if (mode === "http") {
     console.log("Starting Playwright MCP Server in HTTP mode...");
-    const httpServer = new HTTPPlaywrightServer(port);
-    await httpServer.start();
+    try {
+      const httpServer = new HTTPPlaywrightServer(port);
+      await httpServer.start();
+      console.log(`🎉 Server successfully started and listening on port ${port}`);
+    } catch (error) {
+      console.error("❌ Failed to start HTTP server:", error);
+      throw error;
+    }
   } else {
     console.log("Starting Playwright MCP Server in stdio mode...");
-    const server = new PlaywrightMCPServer();
-    await server.run();
+    try {
+      const server = new PlaywrightMCPServer();
+      await server.run();
+    } catch (error) {
+      console.error("❌ Failed to start stdio server:", error);
+      throw error;
+    }
   }
 }
 

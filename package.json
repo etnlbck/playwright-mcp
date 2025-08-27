@@ -7,6 +7,8 @@
   "scripts": {
     "build": "tsc",
     "start": "node dist/index.js",
+    "start:minimal": "node dist/minimal-server.js",
+    "start:debug": "node debug-railway.js",
     "dev": "tsx src/index.ts",
     "test": "node --test",
     "lint": "eslint src/",

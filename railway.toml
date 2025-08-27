@@ -1,11 +1,10 @@
 [build]
-builder = "dockerfile"
+builder = "nixpacks"
 
 [deploy]
 healthcheckPath = "/health"
-healthcheckTimeout = 300
+healthcheckTimeout = 120
 restartPolicyType = "on_failure"
-startCommand = "./start.sh"
 
 [variables]
 MODE = "http"
