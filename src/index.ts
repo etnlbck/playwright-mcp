@@ -16,6 +16,8 @@ if (isNaN(port) || port < 1 || port > 65535) {
 async function main() {
   console.log(`🚀 Starting Playwright MCP Server...`);
   console.log(`Mode: ${mode}, Port: ${port}`);
+  console.log(`Raw PORT env: "${process.env["PORT"]}"`);
+  console.log(`All PORT-related env vars:`, Object.keys(process.env).filter(k => k.includes('PORT')));
   console.log(`Node version: ${process.version}`);
   console.log(`Platform: ${process.platform} ${process.arch}`);
 
@@ -25,6 +27,11 @@ async function main() {
       const httpServer = new HTTPPlaywrightServer(port);
       await httpServer.start();
       console.log(`🎉 Server successfully started and listening on port ${port}`);
+      
+      // Give Railway a moment to detect the server is ready
+      console.log("⏳ Waiting 2 seconds for Railway to detect server...");
+      await new Promise(resolve => setTimeout(resolve, 2000));
+      console.log("✅ Server is ready for health checks");
     } catch (error) {
       console.error("❌ Failed to start HTTP server:", error);
       throw error;

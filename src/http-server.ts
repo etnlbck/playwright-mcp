@@ -38,13 +38,22 @@ class HTTPPlaywrightServer {
     // Health check
     this.app.get("/health", (req, res) => {
       console.log("Health check requested");
+      
+      // Add headers to ensure proper response
+      res.set({
+        'Content-Type': 'application/json',
+        'Cache-Control': 'no-cache',
+        'Connection': 'close'
+      });
+      
       res.status(200).json({ 
         status: "ok", 
         timestamp: new Date().toISOString(),
         uptime: process.uptime(),
         memory: process.memoryUsage(),
         version: "1.0.0",
-        server: "running"
+        server: "running",
+        port: this.port
       });
     });
 
@@ -162,8 +171,11 @@ class HTTPPlaywrightServer {
       console.log(`Memory limit: ${Math.round(process.memoryUsage().heapTotal / 1024 / 1024)}MB`);
       
       const server = this.app.listen(this.port, "0.0.0.0", () => {
+        const addr = server.address();
         console.log(`✅ Playwright MCP HTTP Server running on port ${this.port}`);
+        console.log(`Server address:`, addr);
         console.log(`Health check available at: http://0.0.0.0:${this.port}/health`);
+        console.log(`External health check should work at: http://localhost:${this.port}/health`);
         resolve();
       });
 
