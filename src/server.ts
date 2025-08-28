@@ -49,6 +49,10 @@ class PlaywrightMCPServer {
   private browser: Browser | null = null;
   private page: Page | null = null;
   private browserAvailable: boolean = true;
+  private browserLaunchTime = 0;
+  private maxBrowserAge = 30 * 60 * 1000; // 30 minutes
+  private retryCount = 0;
+  private maxRetries = 3;
 
   constructor() {
     this.server = new Server(
@@ -64,9 +68,48 @@ class PlaywrightMCPServer {
     );
 
     this.setupToolHandlers();
+    this.setupProcessHandlers();
+  }
+
+  private setupProcessHandlers(): void {
+    // Handle graceful shutdown
+    process.on('SIGINT', async () => {
+      console.log('🛑 Received SIGINT, closing browser...');
+      await this.cleanup();
+      process.exit(0);
+    });
+    
+    process.on('SIGTERM', async () => {
+      console.log('🛑 Received SIGTERM, closing browser...');
+      await this.cleanup();
+      process.exit(0);
+    });
+  }
+
+  private async cleanup(): Promise<void> {
+    try {
+      if (this.browser) {
+        console.log('🌐 Closing browser...');
+        await this.browser.close();
+        this.browser = null;
+        this.page = null;
+        console.log('✅ Browser closed successfully');
+      }
+    } catch (error) {
+      console.error('❌ Error during browser cleanup:', error);
+    }
   }
 
   private async ensureBrowser(): Promise<void> {
+    // Check if browser needs to be recycled due to age
+    if (this.browser && this.browserLaunchTime > 0) {
+      const browserAge = Date.now() - this.browserLaunchTime;
+      if (browserAge > this.maxBrowserAge) {
+        console.log(`🔄 Browser is ${Math.round(browserAge / 1000)}s old, recycling...`);
+        await this.cleanup();
+      }
+    }
+
     if (!this.browser) {
       console.log("🔧 Launching Chromium browser...");
       console.log(`Platform: ${process.platform}, Arch: ${process.arch}`);
@@ -92,17 +135,44 @@ class PlaywrightMCPServer {
             "--no-first-run",
             "--no-default-browser-check",
             "--disable-background-networking",
-            "--disable-sync"
+            "--disable-sync",
+            "--memory-pressure-off",
+            "--max_old_space_size=4096"
           ],
         });
-        const launchTime = Date.now() - startTime;
+        
+        this.browserLaunchTime = Date.now();
+        const launchTime = this.browserLaunchTime - startTime;
         console.log(`✅ Chromium browser launched successfully in ${launchTime}ms`);
+        
+        // Reset retry count on successful launch
+        this.retryCount = 0;
+        
+        // Set up browser event handlers
+        this.browser.on('disconnected', () => {
+          console.log('🔌 Browser disconnected, will recreate on next request');
+          this.browser = null;
+          this.page = null;
+        });
+        
       } catch (error) {
-        console.error("❌ Failed to launch Chromium browser:", error);
-        console.error("This might be due to missing system dependencies or insufficient resources");
-        console.warn("⚠️ Browser functionality will be disabled, but server will continue running");
-        this.browserAvailable = false;
-        return;
+        this.retryCount++;
+        console.error(`❌ Failed to launch Chromium browser (attempt ${this.retryCount}/${this.maxRetries}):`, error);
+        
+        if (this.retryCount >= this.maxRetries) {
+          console.error("This might be due to missing system dependencies or insufficient resources");
+          console.warn("⚠️ Browser functionality will be disabled, but server will continue running");
+          this.browserAvailable = false;
+          return;
+        }
+        
+        // Wait before retrying
+        const waitTime = Math.min(1000 * (2 ** this.retryCount), 10000);
+        console.log(`⏳ Waiting ${waitTime}ms before retry...`);
+        await new Promise(resolve => setTimeout(resolve, waitTime));
+        
+        // Recursive retry
+        return this.ensureBrowser();
       }
     }
   }
@@ -111,14 +181,53 @@ class PlaywrightMCPServer {
     if (!this.browserAvailable) {
       throw new Error("Browser is not available - server running in degraded mode");
     }
+    
     await this.ensureBrowser();
-    if (!this.page && this.browser) {
-      this.page = await this.browser.newPage();
+    
+    if (!this.browser) {
+      throw new Error("Browser is not available after ensureBrowser call");
     }
-    if (!this.page) {
-      throw new Error("Failed to create page");
+    
+    // Check if page is still valid
+    if (this.page) {
+      try {
+        // Test if page is still responsive
+        await this.page.url();
+        return this.page;
+      } catch (error) {
+        console.log('🔄 Page is no longer responsive, creating new page...');
+        this.page = null;
+      }
     }
-    return this.page;
+    
+    // Create new page with retry logic
+    let attempts = 0;
+    const maxPageAttempts = 3;
+    
+    while (attempts < maxPageAttempts) {
+      try {
+        this.page = await this.browser.newPage();
+        
+        // Set reasonable timeouts
+        this.page.setDefaultTimeout(30000);
+        this.page.setDefaultNavigationTimeout(30000);
+        
+        console.log('✅ New page created successfully');
+        return this.page;
+      } catch (error) {
+        attempts++;
+        console.error(`❌ Failed to create page (attempt ${attempts}/${maxPageAttempts}):`, error);
+        
+        if (attempts >= maxPageAttempts) {
+          throw new Error(`Failed to create page after ${maxPageAttempts} attempts: ${error instanceof Error ? error.message : String(error)}`);
+        }
+        
+        // Wait before retry
+        await new Promise(resolve => setTimeout(resolve, 1000 * attempts));
+      }
+    }
+    
+    throw new Error("Failed to create page");
   }
 
   private setupToolHandlers(): void {
@@ -218,6 +327,14 @@ class PlaywrightMCPServer {
           {
             name: "close_browser",
             description: "Close the browser instance",
+            inputSchema: {
+              type: "object",
+              properties: {},
+            },
+          },
+          {
+            name: "browser_health",
+            description: "Check browser health and status",
             inputSchema: {
               type: "object",
               properties: {},
@@ -345,6 +462,32 @@ class PlaywrightMCPServer {
             };
           }
 
+          case "browser_health": {
+            const healthInfo: any = {
+              browserAvailable: this.browserAvailable,
+              browserConnected: !!this.browser,
+              pageConnected: !!this.page,
+              browserAge: this.browserLaunchTime > 0 ? Date.now() - this.browserLaunchTime : 0,
+              retryCount: this.retryCount,
+              memoryUsage: process.memoryUsage(),
+              uptime: process.uptime()
+            };
+            
+            if (this.browser) {
+              try {
+                const pages = this.browser.contexts().flatMap(ctx => ctx.pages());
+                healthInfo.pageCount = pages.length;
+                healthInfo.currentUrl = this.page ? await this.page.url() : "No active page";
+              } catch (error) {
+                healthInfo.browserError = error instanceof Error ? error.message : String(error);
+              }
+            }
+            
+            return {
+              content: [{ type: "text", text: JSON.stringify(healthInfo, null, 2) }],
+            };
+          }
+
           default:
             throw new McpError(
               ErrorCode.MethodNotFound,
@@ -369,13 +512,7 @@ class PlaywrightMCPServer {
   async run(): Promise<void> {
     const transport = new StdioServerTransport();
     await this.server.connect(transport);
-
-    process.on("SIGINT", async () => {
-      if (this.browser) {
-        await this.browser.close();
-      }
-      process.exit(0);
-    });
+    console.log('✅ MCP Server connected and ready');
   }
 
   async listTools(): Promise<{tools: Array<{name: string; description: string; inputSchema: object}>}> {
@@ -474,6 +611,14 @@ class PlaywrightMCPServer {
         {
           name: "close_browser",
           description: "Close the browser instance",
+          inputSchema: {
+            type: "object",
+            properties: {},
+          },
+        },
+        {
+          name: "browser_health",
+          description: "Check browser health and status",
           inputSchema: {
             type: "object",
             properties: {},
@@ -596,6 +741,32 @@ class PlaywrightMCPServer {
           }
           return {
             content: [{ type: "text", text: "Browser closed" }],
+          };
+        }
+
+        case "browser_health": {
+          const healthInfo: any = {
+            browserAvailable: this.browserAvailable,
+            browserConnected: !!this.browser,
+            pageConnected: !!this.page,
+            browserAge: this.browserLaunchTime > 0 ? Date.now() - this.browserLaunchTime : 0,
+            retryCount: this.retryCount,
+            memoryUsage: process.memoryUsage(),
+            uptime: process.uptime()
+          };
+          
+          if (this.browser) {
+            try {
+              const pages = this.browser.contexts().flatMap(ctx => ctx.pages());
+              healthInfo.pageCount = pages.length;
+              healthInfo.currentUrl = this.page ? await this.page.url() : "No active page";
+            } catch (error) {
+              healthInfo.browserError = error instanceof Error ? error.message : String(error);
+            }
+          }
+          
+          return {
+            content: [{ type: "text", text: JSON.stringify(healthInfo, null, 2) }],
           };
         }
 

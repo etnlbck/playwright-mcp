@@ -1,8 +1,6 @@
 import express from "express";
 import cors from "cors";
 import helmet from "helmet";
-import { createServer } from "http";
-import { WebSocketServer } from "ws";
 import { PlaywrightMCPServer } from "./server.js";
 import { z } from "zod";
 
@@ -13,20 +11,22 @@ const ToolCallSchema = z.object({
 
 class HTTPPlaywrightServer {
   private app: express.Application;
-  private server: any;
-  private wss: WebSocketServer | null = null;
   private mcpServer: PlaywrightMCPServer;
   private port: number;
-  private sseClients: Set<any> = new Set();
+  private server: any;
+  private keepAliveInterval: NodeJS.Timeout | null = null;
+  private healthCheckInterval: NodeJS.Timeout | null = null;
+  private lastActivity: number = Date.now();
+  private isShuttingDown = false;
 
   constructor(port = 3000) {
     this.app = express();
-    this.server = createServer(this.app);
     this.mcpServer = new PlaywrightMCPServer();
     this.port = port;
     this.setupMiddleware();
     this.setupRoutes();
-    this.setupWebSocket();
+    this.setupProcessHandlers();
+    this.startKeepAlive();
   }
 
   private setupMiddleware(): void {
@@ -34,36 +34,116 @@ class HTTPPlaywrightServer {
     this.app.use(cors());
     this.app.use(express.json({ limit: "10mb" }));
     this.app.use(express.urlencoded({ extended: true }));
+    
+    // Track activity for keepalive
+    this.app.use((req, res, next) => {
+      this.lastActivity = Date.now();
+      next();
+    });
+  }
+
+  private setupProcessHandlers(): void {
+    // Handle graceful shutdown
+    process.on('SIGINT', () => this.gracefulShutdown('SIGINT'));
+    process.on('SIGTERM', () => this.gracefulShutdown('SIGTERM'));
+    process.on('SIGHUP', () => this.gracefulShutdown('SIGHUP'));
+    
+    // Handle uncaught exceptions
+    process.on('uncaughtException', (error) => {
+      console.error('❌ Uncaught Exception:', error);
+      this.gracefulShutdown('uncaughtException');
+    });
+    
+    process.on('unhandledRejection', (reason, promise) => {
+      console.error('❌ Unhandled Rejection at:', promise, 'reason:', reason);
+      this.gracefulShutdown('unhandledRejection');
+    });
+  }
+
+  private startKeepAlive(): void {
+    // Keep-alive heartbeat every 30 seconds
+    this.keepAliveInterval = setInterval(() => {
+      if (!this.isShuttingDown) {
+        console.log(`💓 Keep-alive heartbeat - Server running for ${Math.round(process.uptime())}s`);
+        
+        // Force garbage collection if available
+        if (global.gc) {
+          global.gc();
+          console.log('🧹 Garbage collection triggered');
+        }
+        
+        // Log memory usage
+        const memUsage = process.memoryUsage();
+        console.log(`📊 Memory: ${Math.round(memUsage.heapUsed / 1024 / 1024)}MB used, ${Math.round(memUsage.heapTotal / 1024 / 1024)}MB total`);
+      }
+    }, 30000);
+
+    // Health check interval every 5 minutes
+    this.healthCheckInterval = setInterval(async () => {
+      if (!this.isShuttingDown) {
+        try {
+          // Perform internal health check
+          await this.performHealthCheck();
+        } catch (error) {
+          console.error('❌ Health check failed:', error);
+        }
+      }
+    }, 300000); // 5 minutes
+  }
+
+  private async performHealthCheck(): Promise<void> {
+    try {
+      // Test browser functionality
+      await this.mcpServer.callTool("get_url", {});
+      console.log('✅ Internal health check passed');
+    } catch (error) {
+      console.error('❌ Internal health check failed:', error);
+      // Don't restart here, just log the issue
+    }
+  }
+
+  private async gracefulShutdown(signal: string): Promise<void> {
+    if (this.isShuttingDown) {
+      console.log('🛑 Shutdown already in progress...');
+      return;
+    }
+    
+    this.isShuttingDown = true;
+    console.log(`🛑 Received ${signal}, starting graceful shutdown...`);
+    
+    // Clear intervals
+    if (this.keepAliveInterval) {
+      clearInterval(this.keepAliveInterval);
+      this.keepAliveInterval = null;
+    }
+    
+    if (this.healthCheckInterval) {
+      clearInterval(this.healthCheckInterval);
+      this.healthCheckInterval = null;
+    }
+    
+    // Close server
+    if (this.server) {
+      console.log('🔌 Closing HTTP server...');
+      this.server.close(() => {
+        console.log('✅ HTTP server closed');
+      });
+    }
+    
+    // Close browser
+    try {
+      console.log('🌐 Closing browser...');
+      await this.mcpServer.callTool("close_browser", {});
+      console.log('✅ Browser closed');
+    } catch (error) {
+      console.error('❌ Error closing browser:', error);
+    }
+    
+    console.log('👋 Graceful shutdown complete');
+    process.exit(0);
   }
 
   private setupRoutes(): void {
-    // Root endpoint with connection info
-    this.app.get("/", (req, res) => {
-      res.status(200).json({
-        name: "Playwright MCP Server",
-        version: "1.0.0",
-        description: "Model Context Protocol server for Playwright automation",
-        endpoints: {
-          health: "/health",
-          ping: "/ping", 
-          tools: "/tools",
-          mcp_http: "/mcp",
-          websocket: "/ws",
-          sse: "/sse"
-        },
-        connections: {
-          "HTTP POST": `${req.protocol}://${req.get('host')}/mcp`,
-          "WebSocket": `ws://${req.get('host')}/ws`,
-          "Server-Sent Events": `${req.protocol}://${req.get('host')}/sse`
-        },
-        usage: {
-          "n8n MCP Client (WebSocket)": "ws://your-domain/ws",
-          "n8n MCP Client (SSE)": "GET /sse for events, POST /mcp for commands",
-          "HTTP Client": "POST to /mcp with JSON-RPC 2.0 format"
-        }
-      });
-    });
-
     // Simple ping endpoint
     this.app.get("/ping", (req, res) => {
       res.status(200).send("pong");
@@ -72,22 +152,33 @@ class HTTPPlaywrightServer {
     // Health check
     this.app.get("/health", (req, res) => {
       console.log("Health check requested");
-      
-      // Add headers to ensure proper response
-      res.set({
-        'Content-Type': 'application/json',
-        'Cache-Control': 'no-cache',
-        'Connection': 'close'
-      });
-      
+      const memUsage = process.memoryUsage();
       res.status(200).json({ 
         status: "ok", 
         timestamp: new Date().toISOString(),
         uptime: process.uptime(),
-        memory: process.memoryUsage(),
+        memory: {
+          used: Math.round(memUsage.heapUsed / 1024 / 1024),
+          total: Math.round(memUsage.heapTotal / 1024 / 1024),
+          external: Math.round(memUsage.external / 1024 / 1024),
+          rss: Math.round(memUsage.rss / 1024 / 1024)
+        },
         version: "1.0.0",
         server: "running",
-        port: this.port
+        lastActivity: new Date(this.lastActivity).toISOString(),
+        isShuttingDown: this.isShuttingDown
+      });
+    });
+
+    // Keep-alive endpoint
+    this.app.get("/keepalive", (req, res) => {
+      console.log("Keep-alive requested");
+      this.lastActivity = Date.now();
+      res.status(200).json({
+        status: "alive",
+        timestamp: new Date().toISOString(),
+        uptime: process.uptime(),
+        message: "Server is alive and responsive"
       });
     });
 
@@ -114,142 +205,7 @@ class HTTPPlaywrightServer {
       }
     });
 
-    // Server-Sent Events endpoint for real-time MCP communication
-    this.app.get("/sse", (req, res) => {
-      console.log('📡 SSE client connected');
-      
-      // Set SSE headers
-      res.writeHead(200, {
-        'Content-Type': 'text/event-stream',
-        'Cache-Control': 'no-cache',
-        'Connection': 'keep-alive',
-        'Access-Control-Allow-Origin': '*',
-        'Access-Control-Allow-Headers': 'Cache-Control',
-      });
-
-      // Add client to the set
-      this.sseClients.add(res);
-
-      // Send initial connection event
-      res.write(`event: connected\n`);
-      res.write(`data: ${JSON.stringify({
-        type: "connected",
-        message: "MCP SSE connection established",
-        timestamp: new Date().toISOString(),
-        endpoints: {
-          commands: "/mcp",
-          events: "/sse"
-        }
-      })}\n\n`);
-
-      // Send available tools
-      this.mcpServer.listTools().then(tools => {
-        res.write(`event: tools\n`);
-        res.write(`data: ${JSON.stringify({
-          jsonrpc: "2.0",
-          method: "tools/list",
-          result: tools,
-          timestamp: new Date().toISOString()
-        })}\n\n`);
-      }).catch(error => {
-        console.error('Error sending tools via SSE:', error);
-      });
-
-      // Handle client disconnect
-      req.on('close', () => {
-        console.log('📡 SSE client disconnected');
-        this.sseClients.delete(res);
-      });
-
-      req.on('error', (error) => {
-        console.error('❌ SSE error:', error);
-        this.sseClients.delete(res);
-      });
-    });
-
-    // Enhanced MCP endpoint with SSE notification support
-    this.app.post("/mcp", async (req, res) => {
-      try {
-        console.log("MCP request received:", req.body);
-        
-        const { method, params, id } = req.body;
-        let result;
-        
-        if (method === "tools/list") {
-          result = await this.mcpServer.listTools();
-          
-          // Notify SSE clients
-          this.broadcastSSE('tools_listed', {
-            jsonrpc: "2.0",
-            id: id || 1,
-            result: result,
-            timestamp: new Date().toISOString()
-          });
-          
-          res.json({
-            jsonrpc: "2.0",
-            id: id || 1,
-            result: result
-          });
-        } else if (method === "tools/call") {
-          const { name, arguments: args } = params;
-          
-          // Notify SSE clients about tool execution start
-          this.broadcastSSE('tool_execution_start', {
-            tool: name,
-            arguments: args,
-            timestamp: new Date().toISOString()
-          });
-          
-          result = await this.mcpServer.callTool(name, args);
-          
-          // Notify SSE clients about tool execution completion
-          this.broadcastSSE('tool_execution_complete', {
-            jsonrpc: "2.0",
-            id: id || 1,
-            result: result,
-            tool: name,
-            timestamp: new Date().toISOString()
-          });
-          
-          res.json({
-            jsonrpc: "2.0", 
-            id: id || 1,
-            result: result
-          });
-        } else {
-          const errorResponse = {
-            jsonrpc: "2.0",
-            id: id || 1,
-            error: {
-              code: -32601,
-              message: "Method not found"
-            }
-          };
-          
-          this.broadcastSSE('error', errorResponse);
-          res.status(400).json(errorResponse);
-        }
-      } catch (error) {
-        console.error("MCP request error:", error);
-        const errorResponse = {
-          jsonrpc: "2.0",
-          id: req.body.id || 1,
-          error: {
-            code: -32603,
-            message: "Internal error",
-            data: error instanceof Error ? error.message : String(error)
-          }
-        };
-        
-        this.broadcastSSE('error', errorResponse);
-        res.status(500).json(errorResponse);
-      }
-    });
-
-
-
-    // List available tools (REST endpoint)
+    // List available tools
     this.app.get("/tools", async (req, res) => {
       try {
         const tools = await this.mcpServer.listTools();
@@ -333,110 +289,17 @@ class HTTPPlaywrightServer {
     });
   }
 
-  private setupWebSocket(): void {
-    this.wss = new WebSocketServer({ server: this.server, path: '/ws' });
-    
-    this.wss.on('connection', (ws) => {
-      console.log('🔌 WebSocket client connected');
-      
-      ws.on('message', async (data) => {
-        try {
-          const message = JSON.parse(data.toString());
-          console.log('📨 WebSocket message received:', message);
-          
-          const { method, params, id } = message;
-          
-          if (method === 'tools/list') {
-            const tools = await this.mcpServer.listTools();
-            ws.send(JSON.stringify({
-              jsonrpc: "2.0",
-              id: id || 1,
-              result: tools
-            }));
-          } else if (method === 'tools/call') {
-            const { name, arguments: args } = params;
-            const result = await this.mcpServer.callTool(name, args);
-            ws.send(JSON.stringify({
-              jsonrpc: "2.0",
-              id: id || 1,
-              result: result
-            }));
-          } else {
-            ws.send(JSON.stringify({
-              jsonrpc: "2.0",
-              id: id || 1,
-              error: {
-                code: -32601,
-                message: "Method not found"
-              }
-            }));
-          }
-        } catch (error) {
-          console.error('❌ WebSocket message error:', error);
-          ws.send(JSON.stringify({
-            jsonrpc: "2.0",
-            id: 1,
-            error: {
-              code: -32603,
-              message: "Internal error",
-              data: error instanceof Error ? error.message : String(error)
-            }
-          }));
-        }
-      });
-      
-      ws.on('close', () => {
-        console.log('🔌 WebSocket client disconnected');
-      });
-      
-      ws.on('error', (error) => {
-        console.error('❌ WebSocket error:', error);
-      });
-    });
-    
-    console.log('🔌 WebSocket server setup on /ws path');
-  }
-
-  private broadcastSSE(event: string, data: any): void {
-    const message = `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
-    
-    // Remove disconnected clients
-    const disconnectedClients = new Set();
-    
-    for (const client of this.sseClients) {
-      try {
-        client.write(message);
-      } catch (error) {
-        console.error('❌ Error sending SSE message:', error);
-        disconnectedClients.add(client);
-      }
-    }
-    
-    // Clean up disconnected clients
-    for (const client of disconnectedClients) {
-      this.sseClients.delete(client);
-    }
-    
-    if (this.sseClients.size > 0) {
-      console.log(`📡 Broadcasted SSE event '${event}' to ${this.sseClients.size} clients`);
-    }
-  }
-
   async start(): Promise<void> {
     return new Promise((resolve, reject) => {
       console.log(`Starting HTTP server on port ${this.port}...`);
       console.log(`Environment: NODE_ENV=${process.env["NODE_ENV"]}, MODE=${process.env["MODE"]}`);
       console.log(`Memory limit: ${Math.round(process.memoryUsage().heapTotal / 1024 / 1024)}MB`);
       
-      this.server.listen(this.port, "0.0.0.0", () => {
-        const addr = this.server.address();
+      this.server = this.app.listen(this.port, "0.0.0.0", () => {
         console.log(`✅ Playwright MCP HTTP Server running on port ${this.port}`);
-        console.log(`Server address:`, addr);
         console.log(`Health check available at: http://0.0.0.0:${this.port}/health`);
-        console.log(`WebSocket available at: ws://0.0.0.0:${this.port}/ws`);
-        console.log(`Server-Sent Events available at: http://0.0.0.0:${this.port}/sse`);
-        console.log(`MCP endpoint available at: http://0.0.0.0:${this.port}/mcp`);
-        console.log(`External health check should work at: http://localhost:${this.port}/health`);
+        console.log(`Keep-alive endpoint: http://0.0.0.0:${this.port}/keepalive`);
+        console.log(`Ready check: http://0.0.0.0:${this.port}/ready`);
         resolve();
       });
 
@@ -445,9 +308,22 @@ class HTTPPlaywrightServer {
         reject(error);
       });
 
+      this.server.on('close', () => {
+        console.log('🔌 HTTP server connection closed');
+      });
+
+      this.server.on('connection', (socket: any) => {
+        console.log('🔗 New connection established');
+        socket.on('close', () => {
+          console.log('🔌 Connection closed');
+        });
+      });
+
       // Add timeout for server startup
       setTimeout(() => {
-        console.log('⚠️ Server startup timeout - this may indicate issues with port binding');
+        if (!this.server.listening) {
+          console.log('⚠️ Server startup timeout - this may indicate issues with port binding');
+        }
       }, 10000);
     });
   }
