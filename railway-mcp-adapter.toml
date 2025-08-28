@@ -1,0 +1,14 @@
+[build]
+builder = "nixpacks"
+
+[deploy]
+healthcheckPath = "/health"
+healthcheckTimeout = 120
+restartPolicyType = "always"
+startCommand = "npm run start:http-adapter"
+
+[variables]
+MODE = "http"
+NODE_ENV = "production"
+PORT = "3000"
+PLAYWRIGHT_HTTP_URL = "http://localhost:3000"

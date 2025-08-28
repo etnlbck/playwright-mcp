@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "playwright-railway-mcp": {
+      "command": "node",
+      "args": ["/path/to/your/railway/deployment/dist/railway-mcp-adapter.js"],
+      "env": {
+        "PLAYWRIGHT_HTTP_URL": "https://your-railway-app.railway.app"
+      }
+    }
+  }
+}

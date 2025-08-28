@@ -1,0 +1,285 @@
+{
+  "name": "Playwright MCP Railway Integration",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "execute-sync",
+        "options": {
+          "headers": {
+            "Content-Type": "application/json"
+          }
+        }
+      },
+      "id": "railway-playwright",
+      "name": "Railway Playwright MCP",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [240, 300],
+      "webhookId": "railway-playwright-webhook"
+    },
+    {
+      "parameters": {
+        "values": {
+          "string": [
+            {
+              "name": "tool",
+              "value": "navigate"
+            },
+            {
+              "name": "arguments",
+              "value": "={{ JSON.stringify({ url: $json.website_url, waitUntil: 'load' }) }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "set-navigate-params",
+      "name": "Set Navigate Parameters",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.3,
+      "position": [460, 300]
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "url": "https://your-railway-app.railway.app/execute-sync",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "tool",
+              "value": "={{ $json.tool }}"
+            },
+            {
+              "name": "arguments",
+              "value": "={{ $json.arguments }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "execute-navigate",
+      "name": "Execute Navigate",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [680, 300]
+    },
+    {
+      "parameters": {
+        "values": {
+          "string": [
+            {
+              "name": "tool",
+              "value": "screenshot"
+            },
+            {
+              "name": "arguments",
+              "value": "={{ JSON.stringify({ fullPage: true, type: 'png' }) }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "set-screenshot-params",
+      "name": "Set Screenshot Parameters",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.3,
+      "position": [900, 300]
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "url": "https://your-railway-app.railway.app/execute-sync",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "tool",
+              "value": "={{ $json.tool }}"
+            },
+            {
+              "name": "arguments",
+              "value": "={{ $json.arguments }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "execute-screenshot",
+      "name": "Execute Screenshot",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [1120, 300]
+    },
+    {
+      "parameters": {
+        "values": {
+          "string": [
+            {
+              "name": "tool",
+              "value": "scrape"
+            },
+            {
+              "name": "arguments",
+              "value": "={{ JSON.stringify({ selector: 'h1', attribute: 'textContent' }) }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "set-scrape-params",
+      "name": "Set Scrape Parameters",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.3,
+      "position": [1340, 300]
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "url": "https://your-railway-app.railway.app/execute-sync",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "tool",
+              "value": "={{ $json.tool }}"
+            },
+            {
+              "name": "arguments",
+              "value": "={{ $json.arguments }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "execute-scrape",
+      "name": "Execute Scrape",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [1560, 300]
+    },
+    {
+      "parameters": {
+        "values": {
+          "string": [
+            {
+              "name": "website_url",
+              "value": "https://example.com"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "set-input",
+      "name": "Set Input",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.3,
+      "position": [20, 300]
+    }
+  ],
+  "connections": {
+    "Set Input": {
+      "main": [
+        [
+          {
+            "node": "Set Navigate Parameters",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Set Navigate Parameters": {
+      "main": [
+        [
+          {
+            "node": "Execute Navigate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Execute Navigate": {
+      "main": [
+        [
+          {
+            "node": "Set Screenshot Parameters",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Set Screenshot Parameters": {
+      "main": [
+        [
+          {
+            "node": "Execute Screenshot",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Execute Screenshot": {
+      "main": [
+        [
+          {
+            "node": "Set Scrape Parameters",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Set Scrape Parameters": {
+      "main": [
+        [
+          {
+            "node": "Execute Scrape",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "tags": [],
+  "triggerCount": 0,
+  "updatedAt": "2024-01-15T10:00:00.000Z",
+  "versionId": "1"
+}
