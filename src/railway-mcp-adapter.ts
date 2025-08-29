@@ -185,3 +185,4 @@ main().catch((error) => {
   console.error('❌ Failed to start Railway MCP Adapter:', error);
   process.exit(1);
 });
+

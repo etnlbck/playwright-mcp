@@ -1,0 +1,17 @@
+{
+  "mcpServers": {
+    "playwright-http": {
+      "type": "http",
+      "baseUrl": "http://localhost:3000",
+      "endpoints": {
+        "tools": "/tools",
+        "execute": "/execute-sync",
+        "health": "/health"
+      },
+      "headers": {
+        "Content-Type": "application/json"
+      }
+    }
+  }
+}
+

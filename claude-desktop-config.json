@@ -1,0 +1,13 @@
+{
+  "mcpServers": {
+    "playwright-http": {
+      "command": "node",
+      "args": ["/Users/etnblck/_projects/T1/playwrightMCP/dist/index.js"],
+      "env": {
+        "MODE": "http",
+        "PORT": "3000"
+      }
+    }
+  }
+}
+

@@ -287,6 +287,132 @@ class HTTPPlaywrightServer {
         }
       }
     });
+
+    // MCP-over-HTTP endpoint for mcp-remote client
+    this.app.post("/mcp", async (req, res) => {
+      try {
+        console.log('📨 MCP request received:', JSON.stringify(req.body, null, 2));
+        
+        const mcpRequest = req.body;
+        
+        if (!mcpRequest.method) {
+          return res.status(400).json({
+            jsonrpc: "2.0",
+            id: mcpRequest.id || null,
+            error: {
+              code: -32600,
+              message: "Invalid Request - missing method"
+            }
+          });
+        }
+
+        const mcpResponse: {
+          jsonrpc: string;
+          id: number | string | null;
+          result?: any;
+          error?: {
+            code: number;
+            message: string;
+            data?: string;
+          };
+        } = {
+          jsonrpc: "2.0",
+          id: mcpRequest.id || null
+        };
+
+        try {
+          switch (mcpRequest.method) {
+            case "initialize": {
+              mcpResponse.result = {
+                protocolVersion: "2025-06-18",
+                capabilities: {
+                  tools: {}
+                },
+                serverInfo: {
+                  name: "playwright-mcp-server",
+                  version: "1.0.0"
+                }
+              };
+              break;
+            }
+
+            case "tools/list": {
+              const tools = await this.mcpServer.listTools();
+              mcpResponse.result = { tools: tools.tools };
+              break;
+            }
+
+            case "tools/call": {
+              const { name, arguments: args } = mcpRequest.params;
+              const result = await this.mcpServer.callTool(name, args || {});
+              mcpResponse.result = result;
+              break;
+            }
+
+            default:
+              mcpResponse.error = {
+                code: -32601,
+                message: `Method not found: ${mcpRequest.method}`
+              };
+          }
+        } catch (error) {
+          console.error('❌ MCP method execution error:', error);
+          mcpResponse.error = {
+            code: -32603,
+            message: "Internal error",
+            data: error instanceof Error ? error.message : String(error)
+          };
+        }
+
+        console.log('📤 MCP response:', JSON.stringify(mcpResponse, null, 2));
+        return res.json(mcpResponse);
+
+      } catch (error) {
+        console.error('❌ MCP endpoint error:', error);
+        return res.status(500).json({
+          jsonrpc: "2.0",
+          id: null,
+          error: {
+            code: -32603,
+            message: "Internal error",
+            data: error instanceof Error ? error.message : String(error)
+          }
+        });
+      }
+    });
+
+    // SSE endpoint for MCP streaming (if needed)
+    this.app.get("/sse", (req, res) => {
+      console.log('🔄 SSE connection requested');
+      
+      // Set proper SSE headers with string values only
+      res.writeHead(200, {
+        "Content-Type": "text/event-stream",
+        "Cache-Control": "no-cache",
+        "Connection": "keep-alive",
+        "Access-Control-Allow-Origin": "*",
+        "Access-Control-Allow-Headers": "Cache-Control"
+      });
+
+      // Send initial connection event
+      res.write(`data: ${JSON.stringify({ type: "connected", timestamp: new Date().toISOString() })}\n\n`);
+
+      // Keep connection alive
+      const keepAlive = setInterval(() => {
+        res.write(`data: ${JSON.stringify({ type: "ping", timestamp: new Date().toISOString() })}\n\n`);
+      }, 30000);
+
+      // Handle client disconnect
+      req.on('close', () => {
+        console.log('🔌 SSE client disconnected');
+        clearInterval(keepAlive);
+      });
+
+      req.on('end', () => {
+        console.log('🔚 SSE connection ended');
+        clearInterval(keepAlive);
+      });
+    });
   }
 
   async start(): Promise<void> {

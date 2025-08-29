@@ -1,0 +1,14 @@
+[build]
+builder = "dockerfile"
+dockerfilePath = "Dockerfile.simple"
+
+[deploy]
+healthcheckPath = "/health"
+healthcheckTimeout = 60
+restartPolicyType = "always"
+startCommand = "npm run start:minimal"
+
+[variables]
+MODE = "http"
+NODE_ENV = "production"
+

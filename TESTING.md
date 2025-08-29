@@ -343,3 +343,4 @@ curl -X POST http://localhost:3000/execute \
 ```
 
 This comprehensive testing setup ensures your HTTP streamable Playwright MCP server is working correctly and can handle both streaming and non-streaming requests reliably.
+
