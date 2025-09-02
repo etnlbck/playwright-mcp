@@ -31,12 +31,9 @@ Add this to your Claude Desktop configuration file:
 ```json
 {
   "mcpServers": {
-    "playwright-http-adapter": {
-      "command": "node",
-      "args": ["/Users/etnblck/_projects/T1/playwrightMCP/dist/http-mcp-adapter.js"],
-      "env": {
-        "PLAYWRIGHT_HTTP_URL": "http://localhost:3000"
-      }
+    "playwright-mcp": {
+      "command": "npx",
+      "args": ["mcp-remote", "http://localhost:3000/mcp"]
     }
   }
 }
@@ -212,4 +209,7 @@ You'll know it's working when:
 - ✅ You can execute browser automation commands
 
 The HTTP MCP adapter approach ensures proper protocol compliance while leveraging your existing HTTP server infrastructure!
+
+
+
 

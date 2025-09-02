@@ -2,7 +2,8 @@ FROM node:22-slim
 
 # Set environment variables
 ENV DEBIAN_FRONTEND=noninteractive
-ENV PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1
+ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
+ENV PLAYWRIGHT_SKIP_VALIDATE_HOST_REQUIREMENTS=true
 
 # Install system dependencies for Playwright
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -11,6 +12,19 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     gnupg \
     ca-certificates \
     procps \
+    libnss3 \
+    libatk-bridge2.0-0 \
+    libdrm2 \
+    libxkbcommon0 \
+    libxcomposite1 \
+    libxdamage1 \
+    libxrandr2 \
+    libgbm1 \
+    libxss1 \
+    libasound2 \
+    libatspi2.0-0 \
+    libgtk-3-0 \
+    libgdk-pixbuf2.0-0 \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
@@ -26,8 +40,9 @@ RUN npm ci --only=production --ignore-scripts
 # Install dev dependencies for build
 RUN npm ci --ignore-scripts
 
-# Install Playwright with Chromium
+# Install Playwright with Chromium and dependencies
 RUN npx playwright install chromium --with-deps
+RUN npx playwright install-deps chromium
 
 # Copy source code and startup script
 COPY src/ ./src/

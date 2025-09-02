@@ -1,0 +1,19 @@
+[build]
+builder = "dockerfile"
+dockerfilePath = "Dockerfile"
+
+[deploy]
+startCommand = "./start.sh"
+healthcheckPath = "/health"
+healthcheckTimeout = 300
+restartPolicyType = "on_failure"
+
+[env]
+MODE = "http"
+PORT = "3000"
+PLAYWRIGHT_BROWSERS_PATH = "/ms-playwright"
+PLAYWRIGHT_SKIP_VALIDATE_HOST_REQUIREMENTS = "true"
+
+[resources]
+memory = "1GB"
+cpu = "0.5"

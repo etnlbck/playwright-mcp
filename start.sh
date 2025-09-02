@@ -16,11 +16,16 @@ echo "🔍 Node modules check:"
 ls -la node_modules/.bin/ | head -10
 
 echo "📦 Playwright installation check:"
-if [ -d "/home/playwright/.cache/ms-playwright" ]; then
+if [ -d "/ms-playwright" ]; then
+    echo "  ✅ Playwright browsers found in /ms-playwright"
+    ls -la /ms-playwright/ || echo "  ❌ Cannot list browsers"
+elif [ -d "/home/playwright/.cache/ms-playwright" ]; then
     echo "  ✅ Playwright cache found"
     ls -la /home/playwright/.cache/ms-playwright/ || echo "  ❌ Cannot list cache"
 else
-    echo "  ❌ Playwright cache not found"
+    echo "  ❌ Playwright browsers not found"
+    echo "  Attempting to install browsers..."
+    npx playwright install chromium --with-deps || echo "  ❌ Failed to install browsers"
 fi
 
 echo "🎭 Starting application..."

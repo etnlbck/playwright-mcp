@@ -146,3 +146,6 @@ echo -e "\n${BLUE}📊 Monitor your deployment:${NC}"
 echo -e "   railway logs"
 echo -e "   railway status"
 
+
+
+
