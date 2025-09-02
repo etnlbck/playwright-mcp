@@ -86,7 +86,7 @@ class PlaywrightMCPServer {
     });
   }
 
-  private async cleanup(): Promise<void> {
+  async cleanup(): Promise<void> {
     try {
       if (this.browser) {
         console.log('🌐 Closing browser...');
@@ -508,6 +508,8 @@ class PlaywrightMCPServer {
       }
     });
   }
+
+
 
   async run(): Promise<void> {
     const transport = new StdioServerTransport();

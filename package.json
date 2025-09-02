@@ -17,7 +17,11 @@
     "dev:mcp-client": "tsx --expose-gc src/mcp-client.ts",
     "dev:http-adapter": "tsx --expose-gc src/http-mcp-adapter.ts",
     "dev:railway-adapter": "tsx --expose-gc src/railway-mcp-adapter.ts",
-    "test": "node --test",
+    "test": "playwright test",
+    "test:headed": "playwright test --headed",
+    "test:ui": "playwright test --ui",
+    "test:debug": "playwright test --debug",
+    "test:report": "playwright show-report",
     "lint": "eslint src/",
     "type-check": "tsc --noEmit"
   },
@@ -37,7 +41,8 @@
     "tsx": "^4.19.0",
     "eslint": "^9.9.0",
     "@typescript-eslint/eslint-plugin": "^8.0.0",
-    "@typescript-eslint/parser": "^8.0.0"
+    "@typescript-eslint/parser": "^8.0.0",
+    "@playwright/test": "^1.48.0"
   },
   "engines": {
     "node": ">=18.0.0"

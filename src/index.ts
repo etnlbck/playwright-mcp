@@ -2,6 +2,7 @@
 
 import { PlaywrightMCPServer } from "./server.js";
 import { HTTPPlaywrightServer } from "./http-server.js";
+import { MCPHTTPPlaywrightServer } from "./mcp-http-server.js";
 
 // Determine mode - if Railway provides PORT, we should be in HTTP mode
 const portEnv = process.env["PORT"];
@@ -31,7 +32,7 @@ async function main() {
   // Safety check: If we have a PORT but mode isn't http, something's wrong
   if (portEnv && mode !== "http") {
     console.warn(`⚠️ WARNING: PORT provided (${portEnv}) but mode is ${mode}. Forcing HTTP mode for Railway compatibility.`);
-    const httpServer = new HTTPPlaywrightServer(port);
+    const httpServer = new MCPHTTPPlaywrightServer(port);
     await httpServer.start();
     console.log(`🎉 Server successfully started in forced HTTP mode on port ${port}`);
     return;
@@ -40,7 +41,7 @@ async function main() {
   if (mode === "http") {
     console.log("Starting Playwright MCP Server in HTTP mode...");
     try {
-      const httpServer = new HTTPPlaywrightServer(port);
+      const httpServer = new MCPHTTPPlaywrightServer(port);
       await httpServer.start();
       console.log(`🎉 Server successfully started and listening on port ${port}`);
       

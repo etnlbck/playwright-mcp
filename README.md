@@ -70,6 +70,61 @@ npm install
 npm run dev
 ```
 
+## Testing
+
+This project includes comprehensive Playwright tests with advanced assertions for browser automation and MCP server functionality.
+
+### Test Structure
+
+- **`tests/mcp-server.spec.ts`** - MCP server HTTP endpoints and basic functionality
+- **`tests/browser-automation.spec.ts`** - Direct Playwright browser automation tests
+- **`tests/mcp-integration.spec.ts`** - Integration tests combining MCP tools
+- **`tests/advanced-assertions.spec.ts`** - Advanced Playwright assertions and patterns
+- **`tests/helpers/test-utils.ts`** - Utility functions for common test operations
+
+### Running Tests
+
+```bash
+# Install dependencies
+npm install
+
+# Run all tests
+npm test
+
+# Run tests in headed mode (see browser)
+npm run test:headed
+
+# Run tests with UI mode
+npm run test:ui
+
+# Debug tests
+npm run test:debug
+
+# Show test report
+npm run test:report
+```
+
+### Key Playwright Assertions
+
+The test suite demonstrates comprehensive Playwright assertions including:
+
+- **Page Assertions**: `toHaveTitle()`, `toHaveURL()`, `toContainText()`
+- **Element Assertions**: `toBeVisible()`, `toHaveText()`, `toHaveValue()`, `toBeChecked()`
+- **Form Assertions**: `toHaveValue()`, `toBeSelected()`, `toBeValid()`
+- **Screenshot Assertions**: Image validation and size verification
+- **Network Assertions**: Response status, timing, and performance
+- **Stream Assertions**: Server-Sent Events validation
+- **Browser State Assertions**: Health checks and state verification
+
+### Test Configuration
+
+Tests are configured in `playwright.config.ts` with:
+- Multiple browser support (Chrome, Firefox, Safari)
+- Mobile viewport testing
+- Automatic server startup
+- Screenshot and video capture on failure
+- Trace collection for debugging
+
 ## Environment Variables
 
 - `MODE` - Server mode: "stdio" (default) or "http"

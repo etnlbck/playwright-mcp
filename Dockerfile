@@ -2,6 +2,7 @@ FROM node:22-slim
 
 # Set environment variables
 ENV DEBIAN_FRONTEND=noninteractive
+ENV PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1
 
 # Install system dependencies for Playwright
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -10,24 +11,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     gnupg \
     ca-certificates \
     procps \
-    fonts-liberation \
-    libasound2 \
-    libatk-bridge2.0-0 \
-    libatk1.0-0 \
-    libatspi2.0-0 \
-    libcups2 \
-    libdbus-1-3 \
-    libdrm2 \
-    libgtk-3-0 \
-    libnspr4 \
-    libnss3 \
-    libwayland-client0 \
-    libxcomposite1 \
-    libxdamage1 \
-    libxfixes3 \
-    libxkbcommon0 \
-    libxrandr2 \
-    xvfb \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
@@ -37,8 +20,14 @@ WORKDIR /app
 COPY package*.json ./
 COPY tsconfig.json ./
 
-# Install all dependencies (including dev dependencies for build)
+# Install dependencies
+RUN npm ci --only=production --ignore-scripts
+
+# Install dev dependencies for build
 RUN npm ci --ignore-scripts
+
+# Install Playwright with Chromium
+RUN npx playwright install chromium --with-deps
 
 # Copy source code and startup script
 COPY src/ ./src/
@@ -50,15 +39,21 @@ RUN chmod +x start.sh
 # Build TypeScript
 RUN npm run build
 
-# Install Playwright with Chromium
-RUN npx playwright install chromium --with-deps
-
 # Remove dev dependencies and source files to reduce image size
 RUN npm prune --production
 RUN rm -rf src/ tsconfig.json node_modules/.cache
 
-# Set proper permissions for app directory
+# Create non-root user for security
+RUN groupadd -r playwright && useradd -r -g playwright -G audio,video playwright \
+    && mkdir -p /home/playwright/.cache \
+    && chown -R playwright:playwright /home/playwright \
+    && chown -R playwright:playwright /app
+
+# Set up proper permissions for Playwright
 RUN chmod -R 755 /app
+RUN chmod -R 755 /home/playwright
+
+USER playwright
 
 # Health check
 HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
