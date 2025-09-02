@@ -158,6 +158,50 @@ class MCPHTTPPlaywrightServer {
   }
 
   private setupRoutes(): void {
+    // Root endpoint - provide server information
+    this.app.get('/', (req, res) => {
+      res.json({
+        name: 'Playwright MCP Server',
+        version: '1.0.0',
+        status: 'running',
+        protocol: 'MCP (Model Context Protocol)',
+        endpoints: {
+          mcp: 'POST /mcp - MCP protocol endpoint',
+          health: 'GET /health - Health check',
+          tools: 'GET /tools - List available tools',
+          ready: 'GET /ready - Browser readiness check',
+          keepalive: 'GET /keepalive - Keep-alive endpoint'
+        },
+        timestamp: new Date().toISOString(),
+        uptime: process.uptime()
+      });
+    });
+
+    // MCP endpoint info (GET request to /mcp)
+    this.app.get('/mcp', (req, res) => {
+      res.json({
+        protocol: 'MCP (Model Context Protocol)',
+        version: '2025-06-18',
+        method: 'POST',
+        description: 'This endpoint accepts MCP protocol requests via POST',
+        example: {
+          jsonrpc: '2.0',
+          id: 1,
+          method: 'tools/list',
+          params: {}
+        },
+        availableMethods: [
+          'initialize',
+          'tools/list',
+          'tools/call',
+          'resources/list',
+          'prompts/list'
+        ],
+        status: 'ready',
+        timestamp: new Date().toISOString()
+      });
+    });
+
     // Health check endpoint
     this.app.get('/health', (req, res) => {
       const memUsage = process.memoryUsage();
@@ -182,6 +226,22 @@ class MCPHTTPPlaywrightServer {
         timestamp: new Date().toISOString(),
         uptime: process.uptime(),
         status: 'alive'
+      });
+    });
+
+    // Status endpoint (commonly used by LangChain and other tools)
+    this.app.get('/status', (req, res) => {
+      const memUsage = process.memoryUsage();
+      res.json({
+        status: 'ok',
+        service: 'playwright-mcp-server',
+        version: '1.0.0',
+        uptime: process.uptime(),
+        memory: {
+          used: Math.round(memUsage.heapUsed / 1024 / 1024),
+          total: Math.round(memUsage.heapTotal / 1024 / 1024)
+        },
+        timestamp: new Date().toISOString()
       });
     });
 
@@ -393,7 +453,7 @@ class MCPHTTPPlaywrightServer {
     // Legacy endpoints for backward compatibility
     this.app.get('/tools', async (req, res) => {
       try {
-        const result = await this.mcpServer.callTool('tools/list', {});
+        const result = await this.mcpServer.listTools();
         res.json(result);
       } catch (error) {
         console.error('❌ Tools list error:', error);
