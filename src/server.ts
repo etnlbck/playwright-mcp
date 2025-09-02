@@ -8,6 +8,8 @@ import {
 } from "@modelcontextprotocol/sdk/types.js";
 import { chromium, type Browser, type Page, type PageScreenshotOptions } from "playwright";
 import { z } from "zod";
+import { writeFileSync, mkdirSync, existsSync } from "fs";
+import { join } from "path";
 
 const NavigateArgsSchema = z.object({
   url: z.string().url(),
@@ -19,6 +21,9 @@ const ScreenshotArgsSchema = z.object({
   fullPage: z.boolean().optional(),
   quality: z.number().min(0).max(100).optional(),
   type: z.enum(["png", "jpeg"]).optional(),
+  maxSize: z.number().optional().describe("Maximum size in bytes (default: 2MB)"),
+  compress: z.boolean().optional().describe("Auto-compress if too large (default: true)"),
+  saveToFile: z.boolean().optional().describe("Save to file instead of returning base64 (default: false)"),
 });
 
 const ScrapeArgsSchema = z.object({
@@ -270,13 +275,16 @@ class PlaywrightMCPServer {
           },
           {
             name: "screenshot",
-            description: "Take a screenshot of the current page",
+            description: "Take a screenshot of the current page with size management options",
             inputSchema: {
               type: "object",
               properties: {
                 fullPage: { type: "boolean", description: "Capture full page" },
                 quality: { type: "number", minimum: 0, maximum: 100, description: "JPEG quality" },
                 type: { type: "string", enum: ["png", "jpeg"], description: "Image format" },
+                maxSize: { type: "number", description: "Maximum size in bytes (default: 2MB)" },
+                compress: { type: "boolean", description: "Auto-compress if too large (default: true)" },
+                saveToFile: { type: "boolean", description: "Save to file instead of returning base64 (default: false)" },
               },
             },
           },
@@ -389,19 +397,102 @@ class PlaywrightMCPServer {
           }
 
           case "screenshot": {
-            const { fullPage = false, quality, type = "png" } = ScreenshotArgsSchema.parse(args);
+            const { 
+              fullPage = false, 
+              quality, 
+              type = "png", 
+              maxSize = 2 * 1024 * 1024, // 2MB default
+              compress = true,
+              saveToFile = false
+            } = ScreenshotArgsSchema.parse(args);
+            
             const page = await this.ensurePage();
-            const screenshotOptions: PageScreenshotOptions = { fullPage, type };
+            let screenshotOptions: PageScreenshotOptions = { fullPage, type };
+            
+            // Start with high quality for initial capture
             if (type === "jpeg" && quality !== undefined) {
               screenshotOptions.quality = quality;
+            } else if (type === "jpeg") {
+              screenshotOptions.quality = 90; // High quality initially
             }
-            const screenshot = await page.screenshot(screenshotOptions);
+            
+            let screenshot = await page.screenshot(screenshotOptions);
+            let currentSize = screenshot.length;
+            
+            // If screenshot is too large and compression is enabled
+            if (currentSize > maxSize && compress) {
+              console.log(`📸 Screenshot too large (${Math.round(currentSize / 1024)}KB), attempting compression...`);
+              
+              // Try different compression levels
+              const compressionLevels = type === "jpeg" ? [80, 60, 40, 20] : [0.8, 0.6, 0.4, 0.2];
+              
+              for (const level of compressionLevels) {
+                try {
+                  if (type === "jpeg") {
+                    screenshotOptions.quality = level;
+                  } else {
+                    // For PNG, we'll convert to JPEG with quality
+                    screenshotOptions.type = "jpeg";
+                    screenshotOptions.quality = level * 100;
+                  }
+                  
+                  screenshot = await page.screenshot(screenshotOptions);
+                  currentSize = screenshot.length;
+                  
+                  console.log(`📸 Compressed to ${Math.round(currentSize / 1024)}KB (quality: ${level})`);
+                  
+                  if (currentSize <= maxSize) {
+                    break;
+                  }
+                } catch (error) {
+                  console.log(`⚠️ Compression failed at level ${level}:`, error);
+                }
+              }
+            }
+            
+            // If still too large, offer file save option
+            if (currentSize > maxSize) {
+              if (saveToFile) {
+                // Save to file and return file path
+                const screenshotsDir = join(process.cwd(), 'screenshots');
+                if (!existsSync(screenshotsDir)) {
+                  mkdirSync(screenshotsDir, { recursive: true });
+                }
+                
+                const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+                const filename = `screenshot-${timestamp}.${type === "jpeg" ? "jpg" : type}`;
+                const filepath = join(screenshotsDir, filename);
+                
+                writeFileSync(filepath, screenshot);
+                
+                const httpUrl = `http://localhost:${process.env['PORT'] || 3000}/screenshots/${filename}`;
+                return {
+                  content: [
+                    {
+                      type: "text",
+                      text: `Screenshot saved to file: ${filepath}\nSize: ${Math.round(currentSize / 1024)}KB\nHTTP URL: ${httpUrl}\nNote: Screenshot was too large (${Math.round(currentSize / 1024)}KB > ${Math.round(maxSize / 1024)}KB) to send directly.`
+                    }
+                  ],
+                };
+              } else {
+                return {
+                  content: [
+                    {
+                      type: "text",
+                      text: `❌ Screenshot too large: ${Math.round(currentSize / 1024)}KB (limit: ${Math.round(maxSize / 1024)}KB)\n\n💡 Suggestions:\n- Use saveToFile: true to save to disk\n- Reduce quality or use JPEG format\n- Take a smaller screenshot (disable fullPage)\n- Increase maxSize parameter`
+                    }
+                  ],
+                };
+              }
+            }
+            
+            // Return the screenshot data
             return {
               content: [
                 {
                   type: "image",
                   data: screenshot.toString("base64"),
-                  mimeType: `image/${type}`,
+                  mimeType: `image/${type === "jpeg" ? "jpeg" : type}`,
                 },
               ],
             };
@@ -681,13 +772,16 @@ class PlaywrightMCPServer {
         },
         {
           name: "screenshot",
-          description: "Take a screenshot of the current page",
+          description: "Take a screenshot of the current page with size management options",
           inputSchema: {
             type: "object",
             properties: {
               fullPage: { type: "boolean", description: "Capture full page" },
               quality: { type: "number", minimum: 0, maximum: 100, description: "JPEG quality" },
               type: { type: "string", enum: ["png", "jpeg"], description: "Image format" },
+              maxSize: { type: "number", description: "Maximum size in bytes (default: 2MB)" },
+              compress: { type: "boolean", description: "Auto-compress if too large (default: true)" },
+              saveToFile: { type: "boolean", description: "Save to file instead of returning base64 (default: false)" },
             },
           },
         },
@@ -825,19 +919,102 @@ class PlaywrightMCPServer {
         }
 
         case "screenshot": {
-          const { fullPage = false, quality, type = "png" } = ScreenshotArgsSchema.parse(args);
+          const { 
+            fullPage = false, 
+            quality, 
+            type = "png", 
+            maxSize = 2 * 1024 * 1024, // 2MB default
+            compress = true,
+            saveToFile = false
+          } = ScreenshotArgsSchema.parse(args);
+          
           const page = await this.ensurePage();
-          const screenshotOptions: PageScreenshotOptions = { fullPage, type };
+          let screenshotOptions: PageScreenshotOptions = { fullPage, type };
+          
+          // Start with high quality for initial capture
           if (type === "jpeg" && quality !== undefined) {
             screenshotOptions.quality = quality;
+          } else if (type === "jpeg") {
+            screenshotOptions.quality = 90; // High quality initially
           }
-          const screenshot = await page.screenshot(screenshotOptions);
+          
+          let screenshot = await page.screenshot(screenshotOptions);
+          let currentSize = screenshot.length;
+          
+          // If screenshot is too large and compression is enabled
+          if (currentSize > maxSize && compress) {
+            console.log(`📸 Screenshot too large (${Math.round(currentSize / 1024)}KB), attempting compression...`);
+            
+            // Try different compression levels
+            const compressionLevels = type === "jpeg" ? [80, 60, 40, 20] : [0.8, 0.6, 0.4, 0.2];
+            
+            for (const level of compressionLevels) {
+              try {
+                if (type === "jpeg") {
+                  screenshotOptions.quality = level;
+                } else {
+                  // For PNG, we'll convert to JPEG with quality
+                  screenshotOptions.type = "jpeg";
+                  screenshotOptions.quality = level * 100;
+                }
+                
+                screenshot = await page.screenshot(screenshotOptions);
+                currentSize = screenshot.length;
+                
+                console.log(`📸 Compressed to ${Math.round(currentSize / 1024)}KB (quality: ${level})`);
+                
+                if (currentSize <= maxSize) {
+                  break;
+                }
+              } catch (error) {
+                console.log(`⚠️ Compression failed at level ${level}:`, error);
+              }
+            }
+          }
+          
+          // If still too large, offer file save option
+          if (currentSize > maxSize) {
+            if (saveToFile) {
+              // Save to file and return file path
+              const screenshotsDir = join(process.cwd(), 'screenshots');
+              if (!existsSync(screenshotsDir)) {
+                mkdirSync(screenshotsDir, { recursive: true });
+              }
+              
+              const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+              const filename = `screenshot-${timestamp}.${type === "jpeg" ? "jpg" : type}`;
+              const filepath = join(screenshotsDir, filename);
+              
+              writeFileSync(filepath, screenshot);
+              
+              const httpUrl = `http://localhost:${process.env['PORT'] || 3000}/screenshots/${filename}`;
+              return {
+                content: [
+                  {
+                    type: "text",
+                    text: `Screenshot saved to file: ${filepath}\nSize: ${Math.round(currentSize / 1024)}KB\nHTTP URL: ${httpUrl}\nNote: Screenshot was too large (${Math.round(currentSize / 1024)}KB > ${Math.round(maxSize / 1024)}KB) to send directly.`
+                  }
+                ],
+              };
+            } else {
+              return {
+                content: [
+                  {
+                    type: "text",
+                    text: `❌ Screenshot too large: ${Math.round(currentSize / 1024)}KB (limit: ${Math.round(maxSize / 1024)}KB)\n\n💡 Suggestions:\n- Use saveToFile: true to save to disk\n- Reduce quality or use JPEG format\n- Take a smaller screenshot (disable fullPage)\n- Increase maxSize parameter`
+                  }
+                ],
+              };
+            }
+          }
+          
+          // Return the screenshot data
           return {
             content: [
               {
                 type: "image",
                 data: screenshot.toString("base64"),
-                mimeType: `image/${type}`,
+                mimeType: `image/${type === "jpeg" ? "jpeg" : type}`,
               },
             ],
           };

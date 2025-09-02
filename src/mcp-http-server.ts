@@ -3,6 +3,7 @@ import cors from "cors";
 import helmet from "helmet";
 import { PlaywrightMCPServer } from "./server.js";
 import { z } from "zod";
+import { join } from "path";
 
 const JSONRPCRequestSchema = z.object({
   jsonrpc: z.literal("2.0"),
@@ -243,6 +244,50 @@ class MCPHTTPPlaywrightServer {
         },
         timestamp: new Date().toISOString()
       });
+    });
+
+    // Screenshot file serving endpoint
+    this.app.get('/screenshots/:filename', (req, res) => {
+      const { filename } = req.params;
+      const screenshotsDir = join(process.cwd(), 'screenshots');
+      const filepath = join(screenshotsDir, filename);
+      
+      // Security check - ensure filename doesn't contain path traversal
+      if (filename.includes('..') || filename.includes('/') || filename.includes('\\')) {
+        res.status(400).json({ error: 'Invalid filename' });
+        return;
+      }
+      
+      try {
+        const fs = require('fs');
+        if (!fs.existsSync(filepath)) {
+          res.status(404).json({ error: 'Screenshot not found' });
+          return;
+        }
+        
+        // Set appropriate content type
+        const ext = filename.split('.').pop()?.toLowerCase();
+        const contentType = ext === 'jpg' || ext === 'jpeg' ? 'image/jpeg' : 
+                           ext === 'png' ? 'image/png' : 'application/octet-stream';
+        
+        res.setHeader('Content-Type', contentType);
+        res.setHeader('Cache-Control', 'public, max-age=3600'); // Cache for 1 hour
+        
+        const fileStream = fs.createReadStream(filepath);
+        fileStream.pipe(res);
+        
+        fileStream.on('error', (error: any) => {
+          console.error('❌ Error serving screenshot:', error);
+          if (!res.headersSent) {
+            res.status(500).json({ error: 'Error serving file' });
+          }
+        });
+      } catch (error) {
+        console.error('❌ Error accessing screenshot:', error);
+        if (!res.headersSent) {
+          res.status(500).json({ error: 'Error accessing file' });
+        }
+      }
     });
 
     // MCP protocol endpoint
