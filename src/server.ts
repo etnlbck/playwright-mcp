@@ -48,7 +48,7 @@ class PlaywrightMCPServer {
   private server: Server;
   private browser: Browser | null = null;
   private page: Page | null = null;
-  private browserAvailable: boolean = true;
+  private browserAvailable = true;
   private browserLaunchTime = 0;
   private maxBrowserAge = 30 * 60 * 1000; // 30 minutes
   private retryCount = 0;
@@ -357,6 +357,18 @@ class PlaywrightMCPServer {
               properties: {},
             },
           },
+          {
+            name: "discover_elements",
+            description: "Discover elements matching a selector to help resolve conflicts",
+            inputSchema: {
+              type: "object",
+              properties: {
+                selector: { type: "string", description: "CSS selector to search for" },
+                limit: { type: "number", description: "Maximum number of elements to return (default: 10)" },
+              },
+              required: ["selector"],
+            },
+          },
         ],
       };
     });
@@ -425,10 +437,50 @@ class PlaywrightMCPServer {
             const { selector, timeout } = ClickArgsSchema.parse(args);
             const page = await this.ensurePage();
             const clickOptions = timeout !== undefined ? { timeout } : {};
-            await page.locator(selector).click(clickOptions);
-            return {
-              content: [{ type: "text", text: `Clicked element: ${selector}` }],
-            };
+            
+            try {
+              await page.locator(selector).click(clickOptions);
+              return {
+                content: [{ type: "text", text: `Clicked element: ${selector}` }],
+              };
+            } catch (error: unknown) {
+              // Handle strict mode violations (multiple elements found)
+              if (error instanceof Error && error.message?.includes('strict mode violation')) {
+                const locator = page.locator(selector);
+                const count = await locator.count();
+                
+                // Get information about all matching elements
+                const elementInfo = [];
+                for (let i = 0; i < Math.min(count, 10); i++) {
+                  const element = locator.nth(i);
+                  const tagName = await element.evaluate(el => el.tagName.toLowerCase());
+                  const text = await element.textContent();
+                  const id = await element.getAttribute('id');
+                  const className = await element.getAttribute('class');
+                  const dataTestId = await element.getAttribute('data-testid');
+                  
+                  elementInfo.push({
+                    index: i,
+                    tagName,
+                    text: text?.substring(0, 100) || '',
+                    id: id || '',
+                    className: className?.substring(0, 50) || '',
+                    dataTestId: dataTestId || ''
+                  });
+                }
+                
+                const errorMessage = `❌ Click failed: Found ${count} elements matching "${selector}". Please use a more specific selector.\n\nMatching elements:\n${elementInfo.map(el => 
+                  `${el.index + 1}) <${el.tagName}${el.id ? ` id="${el.id}"` : ''}${el.className ? ` class="${el.className}"` : ''}${el.dataTestId ? ` data-testid="${el.dataTestId}"` : ''}>${el.text ? ` "${el.text}"` : ''}</${el.tagName}>`
+                ).join('\n')}\n\n💡 Suggestions:\n- Use a more specific selector (e.g., add an ID or class)\n- Use the "discover_elements" tool to find unique selectors\n- Try clicking by index: ${selector}:nth-child(1)`;
+                
+                return {
+                  content: [{ type: "text", text: errorMessage }],
+                };
+              }
+              
+              // Re-throw other errors
+              throw error;
+            }
           }
 
           case "type": {
@@ -480,7 +532,7 @@ class PlaywrightMCPServer {
           }
 
           case "browser_health": {
-            const healthInfo: any = {
+            const healthInfo: Record<string, unknown> = {
               browserAvailable: this.browserAvailable,
               browserConnected: !!this.browser,
               pageConnected: !!this.page,
@@ -493,15 +545,88 @@ class PlaywrightMCPServer {
             if (this.browser) {
               try {
                 const pages = this.browser.contexts().flatMap(ctx => ctx.pages());
-                healthInfo.pageCount = pages.length;
-                healthInfo.currentUrl = this.page ? await this.page.url() : "No active page";
+                healthInfo['pageCount'] = pages.length;
+                healthInfo['currentUrl'] = this.page ? await this.page.url() : "No active page";
               } catch (error) {
-                healthInfo.browserError = error instanceof Error ? error.message : String(error);
+                healthInfo['browserError'] = error instanceof Error ? error.message : String(error);
               }
             }
             
             return {
               content: [{ type: "text", text: JSON.stringify(healthInfo, null, 2) }],
+            };
+          }
+
+          case "discover_elements": {
+            const { selector, limit = 10 } = args as { selector: string; limit?: number };
+            const page = await this.ensurePage();
+            const locator = page.locator(selector);
+            const count = await locator.count();
+            
+            const elementInfo = [];
+            const maxElements = Math.min(count, limit);
+            
+            for (let i = 0; i < maxElements; i++) {
+              const element = locator.nth(i);
+              try {
+                const tagName = await element.evaluate(el => el.tagName.toLowerCase());
+                const text = await element.textContent();
+                const id = await element.getAttribute('id');
+                const className = await element.getAttribute('class');
+                const dataTestId = await element.getAttribute('data-testid');
+                const ariaLabel = await element.getAttribute('aria-label');
+                const role = await element.getAttribute('role');
+                const type = await element.getAttribute('type');
+                const href = await element.getAttribute('href');
+                
+                // Generate suggested selectors
+                const suggestions = [];
+                if (id) suggestions.push(`#${id}`);
+                if (dataTestId) suggestions.push(`[data-testid="${dataTestId}"]`);
+                if (className) {
+                  const classes = className.split(' ').filter(c => c.trim());
+                  if (classes.length > 0) {
+                    suggestions.push(`.${classes[0]}`);
+                    if (classes.length > 1) {
+                      suggestions.push(`.${classes.slice(0, 2).join('.')}`);
+                    }
+                  }
+                }
+                if (ariaLabel) suggestions.push(`[aria-label="${ariaLabel}"]`);
+                if (role) suggestions.push(`[role="${role}"]`);
+                if (type) suggestions.push(`[type="${type}"]`);
+                if (href) suggestions.push(`[href="${href}"]`);
+                
+                elementInfo.push({
+                  index: i,
+                  tagName,
+                  text: text?.substring(0, 200) || '',
+                  id: id || '',
+                  className: className || '',
+                  dataTestId: dataTestId || '',
+                  ariaLabel: ariaLabel || '',
+                  role: role || '',
+                  type: type || '',
+                  href: href || '',
+                  suggestedSelectors: suggestions.slice(0, 3) // Top 3 suggestions
+                });
+              } catch (error) {
+                elementInfo.push({
+                  index: i,
+                  error: error instanceof Error ? error.message : String(error)
+                });
+              }
+            }
+            
+            const result = {
+              selector,
+              totalFound: count,
+              elementsReturned: maxElements,
+              elements: elementInfo
+            };
+            
+            return {
+              content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
             };
           }
 
@@ -643,6 +768,18 @@ class PlaywrightMCPServer {
             properties: {},
           },
         },
+        {
+          name: "discover_elements",
+          description: "Discover elements matching a selector to help resolve conflicts",
+          inputSchema: {
+            type: "object",
+            properties: {
+              selector: { type: "string", description: "CSS selector to search for" },
+              limit: { type: "number", description: "Maximum number of elements to return (default: 10)" },
+            },
+            required: ["selector"],
+          },
+        },
       ],
     };
   }
@@ -736,10 +873,50 @@ class PlaywrightMCPServer {
           const { selector, timeout } = ClickArgsSchema.parse(args);
           const page = await this.ensurePage();
           const clickOptions = timeout !== undefined ? { timeout } : {};
-          await page.locator(selector).click(clickOptions);
-          return {
-            content: [{ type: "text", text: `Clicked element: ${selector}` }],
-          };
+          
+          try {
+            await page.locator(selector).click(clickOptions);
+            return {
+              content: [{ type: "text", text: `Clicked element: ${selector}` }],
+            };
+          } catch (error: unknown) {
+            // Handle strict mode violations (multiple elements found)
+            if (error instanceof Error && error.message?.includes('strict mode violation')) {
+              const locator = page.locator(selector);
+              const count = await locator.count();
+              
+              // Get information about all matching elements
+              const elementInfo = [];
+              for (let i = 0; i < Math.min(count, 10); i++) {
+                const element = locator.nth(i);
+                const tagName = await element.evaluate(el => el.tagName.toLowerCase());
+                const text = await element.textContent();
+                const id = await element.getAttribute('id');
+                const className = await element.getAttribute('class');
+                const dataTestId = await element.getAttribute('data-testid');
+                
+                elementInfo.push({
+                  index: i,
+                  tagName,
+                  text: text?.substring(0, 100) || '',
+                  id: id || '',
+                  className: className?.substring(0, 50) || '',
+                  dataTestId: dataTestId || ''
+                });
+              }
+              
+              const errorMessage = `❌ Click failed: Found ${count} elements matching "${selector}". Please use a more specific selector.\n\nMatching elements:\n${elementInfo.map(el => 
+                `${el.index + 1}) <${el.tagName}${el.id ? ` id="${el.id}"` : ''}${el.className ? ` class="${el.className}"` : ''}${el.dataTestId ? ` data-testid="${el.dataTestId}"` : ''}>${el.text ? ` "${el.text}"` : ''}</${el.tagName}>`
+              ).join('\n')}\n\n💡 Suggestions:\n- Use a more specific selector (e.g., add an ID or class)\n- Use the "discover_elements" tool to find unique selectors\n- Try clicking by index: ${selector}:nth-child(1)`;
+              
+              return {
+                content: [{ type: "text", text: errorMessage }],
+              };
+            }
+            
+            // Re-throw other errors
+            throw error;
+          }
         }
 
         case "type": {
@@ -791,7 +968,7 @@ class PlaywrightMCPServer {
         }
 
         case "browser_health": {
-          const healthInfo: any = {
+          const healthInfo: Record<string, unknown> = {
             browserAvailable: this.browserAvailable,
             browserConnected: !!this.browser,
             pageConnected: !!this.page,
@@ -804,15 +981,88 @@ class PlaywrightMCPServer {
           if (this.browser) {
             try {
               const pages = this.browser.contexts().flatMap(ctx => ctx.pages());
-              healthInfo.pageCount = pages.length;
-              healthInfo.currentUrl = this.page ? await this.page.url() : "No active page";
+              healthInfo['pageCount'] = pages.length;
+              healthInfo['currentUrl'] = this.page ? await this.page.url() : "No active page";
             } catch (error) {
-              healthInfo.browserError = error instanceof Error ? error.message : String(error);
+              healthInfo['browserError'] = error instanceof Error ? error.message : String(error);
             }
           }
           
           return {
             content: [{ type: "text", text: JSON.stringify(healthInfo, null, 2) }],
+          };
+        }
+
+        case "discover_elements": {
+          const { selector, limit = 10 } = args as { selector: string; limit?: number };
+          const page = await this.ensurePage();
+          const locator = page.locator(selector);
+          const count = await locator.count();
+          
+          const elementInfo = [];
+          const maxElements = Math.min(count, limit);
+          
+          for (let i = 0; i < maxElements; i++) {
+            const element = locator.nth(i);
+            try {
+              const tagName = await element.evaluate(el => el.tagName.toLowerCase());
+              const text = await element.textContent();
+              const id = await element.getAttribute('id');
+              const className = await element.getAttribute('class');
+              const dataTestId = await element.getAttribute('data-testid');
+              const ariaLabel = await element.getAttribute('aria-label');
+              const role = await element.getAttribute('role');
+              const type = await element.getAttribute('type');
+              const href = await element.getAttribute('href');
+              
+              // Generate suggested selectors
+              const suggestions = [];
+              if (id) suggestions.push(`#${id}`);
+              if (dataTestId) suggestions.push(`[data-testid="${dataTestId}"]`);
+              if (className) {
+                const classes = className.split(' ').filter(c => c.trim());
+                if (classes.length > 0) {
+                  suggestions.push(`.${classes[0]}`);
+                  if (classes.length > 1) {
+                    suggestions.push(`.${classes.slice(0, 2).join('.')}`);
+                  }
+                }
+              }
+              if (ariaLabel) suggestions.push(`[aria-label="${ariaLabel}"]`);
+              if (role) suggestions.push(`[role="${role}"]`);
+              if (type) suggestions.push(`[type="${type}"]`);
+              if (href) suggestions.push(`[href="${href}"]`);
+              
+              elementInfo.push({
+                index: i,
+                tagName,
+                text: text?.substring(0, 200) || '',
+                id: id || '',
+                className: className || '',
+                dataTestId: dataTestId || '',
+                ariaLabel: ariaLabel || '',
+                role: role || '',
+                type: type || '',
+                href: href || '',
+                suggestedSelectors: suggestions.slice(0, 3) // Top 3 suggestions
+              });
+            } catch (error) {
+              elementInfo.push({
+                index: i,
+                error: error instanceof Error ? error.message : String(error)
+              });
+            }
+          }
+          
+          const result = {
+            selector,
+            totalFound: count,
+            elementsReturned: maxElements,
+            elements: elementInfo
+          };
+          
+          return {
+            content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
           };
         }
 
