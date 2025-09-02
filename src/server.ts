@@ -137,7 +137,24 @@ class PlaywrightMCPServer {
             "--disable-background-networking",
             "--disable-sync",
             "--memory-pressure-off",
-            "--max_old_space_size=4096"
+            "--max_old_space_size=4096",
+            "--disable-blink-features=AutomationControlled",
+            "--disable-features=VizDisplayCompositor,TranslateUI",
+            "--disable-ipc-flooding-protection",
+            "--disable-renderer-backgrounding",
+            "--disable-backgrounding-occluded-windows",
+            "--disable-client-side-phishing-detection",
+            "--disable-component-extensions-with-background-pages",
+            "--disable-default-apps",
+            "--disable-hang-monitor",
+            "--disable-prompt-on-repost",
+            "--disable-sync",
+            "--metrics-recording-only",
+            "--no-first-run",
+            "--safebrowsing-disable-auto-update",
+            "--enable-automation",
+            "--password-store=basic",
+            "--use-mock-keychain"
           ],
         });
         
@@ -634,13 +651,40 @@ class PlaywrightMCPServer {
     try {
       switch (name) {
         case "navigate": {
-          const { url, waitUntil = "load", timeout } = NavigateArgsSchema.parse(args);
+          const { url, waitUntil = "load", timeout = 30000 } = NavigateArgsSchema.parse(args);
           const page = await this.ensurePage();
-          const gotoOptions = timeout !== undefined ? { waitUntil, timeout } : { waitUntil };
-          await page.goto(url, gotoOptions);
-          return {
-            content: [{ type: "text", text: `Navigated to ${url}` }],
+          
+          // Set default page timeout
+          page.setDefaultTimeout(timeout);
+          
+          const gotoOptions = { 
+            waitUntil: waitUntil === "networkidle" ? "domcontentloaded" : waitUntil,
+            timeout
           };
+          
+          try {
+            await page.goto(url, gotoOptions);
+            
+            // If we used domcontentloaded instead of networkidle, wait a bit more
+            if (waitUntil === "networkidle") {
+              await page.waitForTimeout(2000); // Wait 2 seconds for network to settle
+            }
+            
+            return {
+              content: [{ type: "text", text: `Navigated to ${url}` }],
+            };
+          } catch (error) {
+            // If navigation fails, try with a more lenient approach
+            console.log(`⚠️ Navigation failed with ${waitUntil}, trying with domcontentloaded...`);
+            try {
+              await page.goto(url, { waitUntil: "domcontentloaded", timeout: timeout });
+              return {
+                content: [{ type: "text", text: `Navigated to ${url} (fallback mode)` }],
+              };
+            } catch (fallbackError) {
+              throw new Error(`Navigation failed: ${error instanceof Error ? error.message : String(error)}`);
+            }
+          }
         }
 
         case "screenshot": {

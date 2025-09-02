@@ -221,7 +221,7 @@ class MCPHTTPPlaywrightServer {
               tools: [
                 {
                   name: "navigate",
-                  description: "Navigate to a URL",
+                  description: "Navigate to a URL with robust timeout handling",
                   inputSchema: {
                     type: "object",
                     properties: {
@@ -229,9 +229,9 @@ class MCPHTTPPlaywrightServer {
                       waitUntil: { 
                         type: "string", 
                         enum: ["load", "domcontentloaded", "networkidle"],
-                        description: "When to consider navigation successful"
+                        description: "When to consider navigation successful (default: load)"
                       },
-                      timeout: { type: "number", description: "Timeout in milliseconds" }
+                      timeout: { type: "number", description: "Timeout in milliseconds (default: 30000)" }
                     },
                     required: ["url"]
                   }
