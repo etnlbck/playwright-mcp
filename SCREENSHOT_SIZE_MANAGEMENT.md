@@ -165,3 +165,4 @@ curl -X POST http://localhost:3000/mcp \
 - **Format**: PNG by default, JPEG for compression
 
 The screenshot tool now handles large images gracefully and provides multiple options for Claude Desktop to work with screenshots of any size! 🎉
+

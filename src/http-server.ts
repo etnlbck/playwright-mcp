@@ -13,7 +13,7 @@ class HTTPPlaywrightServer {
   private app: express.Application;
   private mcpServer: PlaywrightMCPServer;
   private port: number;
-  private server: any;
+  private server: any; // eslint-disable-line @typescript-eslint/no-explicit-any
   private keepAliveInterval: NodeJS.Timeout | null = null;
   private healthCheckInterval: NodeJS.Timeout | null = null;
   private lastActivity: number = Date.now();
@@ -93,9 +93,9 @@ class HTTPPlaywrightServer {
 
   private async performHealthCheck(): Promise<void> {
     try {
-      // Test browser functionality
-      await this.mcpServer.callTool("get_url", {});
-      console.log('✅ Internal health check passed');
+      // Check browser status without starting it
+      await this.mcpServer.callTool("browser_status", {});
+      console.log('✅ Internal health check passed - server and browser status checked');
     } catch (error) {
       console.error('❌ Internal health check failed:', error);
       // Don't restart here, just log the issue
@@ -182,21 +182,17 @@ class HTTPPlaywrightServer {
       });
     });
 
-    // Ready check - ensures browser is initialized
+    // Ready check - server is ready, browser will start on-demand
     this.app.get("/ready", async (req, res) => {
       try {
-        console.log("Ready check requested - initializing browser...");
-        const startTime = Date.now();
-        await this.mcpServer.callTool("get_url", {});
-        const initTime = Date.now() - startTime;
-        console.log(`✅ Browser ready check completed in ${initTime}ms`);
+        console.log("Ready check requested - server is ready for on-demand browser startup");
         res.json({ 
           status: "ready", 
           timestamp: new Date().toISOString(),
-          browserInitTime: initTime
+          message: "Server ready - browser will start on first tool call"
         });
       } catch (error) {
-        console.error("❌ Browser ready check failed:", error);
+        console.error("❌ Ready check failed:", error);
         res.status(503).json({ 
           status: "not_ready", 
           error: error instanceof Error ? error.message : String(error),
@@ -309,7 +305,7 @@ class HTTPPlaywrightServer {
         const mcpResponse: {
           jsonrpc: string;
           id: number | string | null;
-          result?: any;
+          result?: any; // eslint-disable-line @typescript-eslint/no-explicit-any
           error?: {
             code: number;
             message: string;
@@ -438,7 +434,7 @@ class HTTPPlaywrightServer {
         console.log('🔌 HTTP server connection closed');
       });
 
-      this.server.on('connection', (socket: any) => {
+      this.server.on('connection', (socket: any) => { // eslint-disable-line @typescript-eslint/no-explicit-any
         console.log('🔗 New connection established');
         socket.on('close', () => {
           console.log('🔌 Connection closed');

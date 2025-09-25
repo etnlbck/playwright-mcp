@@ -132,3 +132,4 @@ echo "   - HTTP endpoint to serve saved screenshots"
 echo "   - Helpful error messages with suggestions"
 echo ""
 echo "💡 This should resolve Claude Desktop screenshot size issues!"
+

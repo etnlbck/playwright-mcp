@@ -8,8 +8,8 @@ import {
 } from "@modelcontextprotocol/sdk/types.js";
 import { chromium, type Browser, type Page, type PageScreenshotOptions } from "playwright";
 import { z } from "zod";
-import { writeFileSync, mkdirSync, existsSync } from "fs";
-import { join } from "path";
+import { writeFileSync, mkdirSync, existsSync } from "node:fs";
+import { join } from "node:path";
 
 const NavigateArgsSchema = z.object({
   url: z.string().url(),
@@ -185,7 +185,7 @@ class PlaywrightMCPServer {
           console.error("This might be due to missing system dependencies or insufficient resources");
           console.warn("⚠️ Browser functionality will be disabled, but server will continue running");
           this.browserAvailable = false;
-          return;
+          throw new Error("Browser is not available - server running in degraded mode");
         }
         
         // Wait before retrying
@@ -200,10 +200,7 @@ class PlaywrightMCPServer {
   }
 
   private async ensurePage(): Promise<Page> {
-    if (!this.browserAvailable) {
-      throw new Error("Browser is not available - server running in degraded mode");
-    }
-    
+    // Always try to ensure browser is available for on-demand startup
     await this.ensureBrowser();
     
     if (!this.browser) {
@@ -360,6 +357,14 @@ class PlaywrightMCPServer {
           {
             name: "browser_health",
             description: "Check browser health and status",
+            inputSchema: {
+              type: "object",
+              properties: {},
+            },
+          },
+          {
+            name: "browser_status",
+            description: "Check browser status without starting it (for health checks)",
             inputSchema: {
               type: "object",
               properties: {},
@@ -645,6 +650,24 @@ class PlaywrightMCPServer {
             
             return {
               content: [{ type: "text", text: JSON.stringify(healthInfo, null, 2) }],
+            };
+          }
+
+          case "browser_status": {
+            // Check browser status without starting it - safe for health checks
+            const statusInfo: Record<string, unknown> = {
+              browserAvailable: this.browserAvailable,
+              browserConnected: !!this.browser,
+              pageConnected: !!this.page,
+              browserAge: this.browserLaunchTime > 0 ? Date.now() - this.browserLaunchTime : 0,
+              retryCount: this.retryCount,
+              memoryUsage: process.memoryUsage(),
+              uptime: process.uptime(),
+              status: this.browser ? "running" : "not_started"
+            };
+            
+            return {
+              content: [{ type: "text", text: JSON.stringify(statusInfo, null, 2) }],
             };
           }
 
@@ -1167,6 +1190,24 @@ class PlaywrightMCPServer {
           
           return {
             content: [{ type: "text", text: JSON.stringify(healthInfo, null, 2) }],
+          };
+        }
+
+        case "browser_status": {
+          // Check browser status without starting it - safe for health checks
+          const statusInfo: Record<string, unknown> = {
+            browserAvailable: this.browserAvailable,
+            browserConnected: !!this.browser,
+            pageConnected: !!this.page,
+            browserAge: this.browserLaunchTime > 0 ? Date.now() - this.browserLaunchTime : 0,
+            retryCount: this.retryCount,
+            memoryUsage: process.memoryUsage(),
+            uptime: process.uptime(),
+            status: this.browser ? "running" : "not_started"
+          };
+          
+          return {
+            content: [{ type: "text", text: JSON.stringify(statusInfo, null, 2) }],
           };
         }
 
