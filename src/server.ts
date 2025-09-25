@@ -21,7 +21,7 @@ const ScreenshotArgsSchema = z.object({
   fullPage: z.boolean().optional(),
   quality: z.number().min(0).max(100).optional(),
   type: z.enum(["png", "jpeg"]).optional(),
-  maxSize: z.number().optional().describe("Maximum size in bytes (default: 2MB)"),
+  maxSize: z.number().optional().describe("Maximum size in bytes (default: 5MB)"),
   compress: z.boolean().optional().describe("Auto-compress if too large (default: true)"),
   saveToFile: z.boolean().optional().describe("Save to file instead of returning base64 (default: false)"),
 });
@@ -279,7 +279,7 @@ class PlaywrightMCPServer {
                 fullPage: { type: "boolean", description: "Capture full page" },
                 quality: { type: "number", minimum: 0, maximum: 100, description: "JPEG quality" },
                 type: { type: "string", enum: ["png", "jpeg"], description: "Image format" },
-                maxSize: { type: "number", description: "Maximum size in bytes (default: 2MB)" },
+                maxSize: { type: "number", description: "Maximum size in bytes (default: 5MB)" },
                 compress: { type: "boolean", description: "Auto-compress if too large (default: true)" },
                 saveToFile: { type: "boolean", description: "Save to file instead of returning base64 (default: false)" },
               },
@@ -406,7 +406,7 @@ class PlaywrightMCPServer {
               fullPage = false, 
               quality, 
               type = "png", 
-              maxSize = 2 * 1024 * 1024, // 2MB default
+              maxSize = 5 * 1024 * 1024, // 5MB default
               compress = true,
               saveToFile = false
             } = ScreenshotArgsSchema.parse(args);
