@@ -382,6 +382,14 @@ class PlaywrightMCPServer {
               required: ["selector"],
             },
           },
+          {
+            name: "get_page_title",
+            description: "Get the page title safely (handles multiple title elements)",
+            inputSchema: {
+              type: "object",
+              properties: {},
+            },
+          },
         ],
       };
     });
@@ -507,26 +515,85 @@ class PlaywrightMCPServer {
             const { selector = "body", attribute, multiple = false } = ScrapeArgsSchema.parse(args);
             const page = await this.ensurePage();
             
-            if (multiple) {
-              const elements = await page.locator(selector).all();
-              const results = [];
-              for (const element of elements) {
-                const value = attribute 
-                  ? await element.getAttribute(attribute)
-                  : await element.textContent();
-                results.push(value);
+            try {
+              if (multiple) {
+                const elements = await page.locator(selector).all();
+                const results = [];
+                for (const element of elements) {
+                  const value = attribute 
+                    ? await element.getAttribute(attribute)
+                    : await element.textContent();
+                  results.push(value);
+                }
+                return {
+                  content: [{ type: "text", text: JSON.stringify(results, null, 2) }],
+                };
               }
+              
+              // For single element, check if multiple elements match
+              const locator = page.locator(selector);
+              const count = await locator.count();
+              
+              if (count === 0) {
+                return {
+                  content: [{ type: "text", text: "No elements found matching the selector" }],
+                };
+              }
+              
+              if (count > 1) {
+                // Get information about all matching elements
+                const elementInfo = [];
+                for (let i = 0; i < Math.min(count, 10); i++) {
+                  const element = locator.nth(i);
+                  const tagName = await element.evaluate(el => el.tagName.toLowerCase());
+                  const text = await element.textContent();
+                  const id = await element.getAttribute('id');
+                  const className = await element.getAttribute('class');
+                  const dataTestId = await element.getAttribute('data-testid');
+                  
+                  elementInfo.push({
+                    index: i,
+                    tagName,
+                    text: text?.substring(0, 100) || '',
+                    id: id || '',
+                    className: className?.substring(0, 50) || '',
+                    dataTestId: dataTestId || ''
+                  });
+                }
+                
+                const errorMessage = `❌ Scrape failed: Found ${count} elements matching "${selector}". Please use a more specific selector.\n\nMatching elements:\n${elementInfo.map(el => 
+                  `${el.index + 1}) <${el.tagName}${el.id ? ` id="${el.id}"` : ''}${el.className ? ` class="${el.className}"` : ''}${el.dataTestId ? ` data-testid="${el.dataTestId}"` : ''}>${el.text ? ` "${el.text}"` : ''}</${el.tagName}>`
+                ).join('\n')}\n\n💡 Suggestions:\n- Use a more specific selector (e.g., add an ID or class)\n- Use the "discover_elements" tool to find unique selectors\n- Use multiple: true to get all matching elements\n- Try: ${selector}:first-of-type or ${selector}:nth-child(1)`;
+                
+                return {
+                  content: [{ type: "text", text: errorMessage }],
+                };
+              }
+              
+              // Single element found, proceed normally
+              const element = locator.first();
+              const value = attribute
+                ? await element.getAttribute(attribute)
+                : await element.textContent();
               return {
-                content: [{ type: "text", text: JSON.stringify(results, null, 2) }],
+                content: [{ type: "text", text: value || "" }],
               };
+              
+            } catch (error) {
+              if (error instanceof Error && error.message?.includes('strict mode violation')) {
+                // This shouldn't happen with our new logic, but just in case
+                const locator = page.locator(selector);
+                const count = await locator.count();
+                
+                return {
+                  content: [{ 
+                    type: "text", 
+                    text: `❌ Strict mode violation: Found ${count} elements matching "${selector}". Use multiple: true to get all elements or make your selector more specific.` 
+                  }],
+                };
+              }
+              throw error;
             }
-            const element = page.locator(selector);
-            const value = attribute
-              ? await element.getAttribute(attribute)
-              : await element.textContent();
-            return {
-              content: [{ type: "text", text: value || "" }],
-            };
           }
 
           case "click": {
@@ -742,6 +809,56 @@ class PlaywrightMCPServer {
             return {
               content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
             };
+          }
+
+          case "get_page_title": {
+            const page = await this.ensurePage();
+            
+            try {
+              // Try to get the main page title from head > title
+              const mainTitle = await page.locator('head > title').first().textContent();
+              if (mainTitle) {
+                return {
+                  content: [{ type: "text", text: mainTitle }],
+                };
+              }
+              
+              // Fallback: look for any title element
+              const titleElements = await page.locator('title').all();
+              if (titleElements.length > 0) {
+                const titles = [];
+                for (const element of titleElements) {
+                  const text = await element.textContent();
+                  if (text) titles.push(text);
+                }
+                
+                if (titles.length === 1) {
+                  return {
+                    content: [{ type: "text", text: titles[0] }],
+                  };
+                } else {
+                  return {
+                    content: [{ 
+                      type: "text", 
+                      text: `Found ${titles.length} title elements:\n${titles.map((t, i) => `${i + 1}) ${t}`).join('\n')}\n\nUsing first title: ${titles[0]}` 
+                    }],
+                  };
+                }
+              }
+              
+              // No title found
+              return {
+                content: [{ type: "text", text: "No page title found" }],
+              };
+              
+            } catch (error) {
+              return {
+                content: [{ 
+                  type: "text", 
+                  text: `Error getting page title: ${error instanceof Error ? error.message : String(error)}` 
+                }],
+              };
+            }
           }
 
           default:
@@ -1047,26 +1164,85 @@ class PlaywrightMCPServer {
           const { selector = "body", attribute, multiple = false } = ScrapeArgsSchema.parse(args);
           const page = await this.ensurePage();
           
-          if (multiple) {
-            const elements = await page.locator(selector).all();
-            const results = [];
-            for (const element of elements) {
-              const value = attribute 
-                ? await element.getAttribute(attribute)
-                : await element.textContent();
-              results.push(value);
+          try {
+            if (multiple) {
+              const elements = await page.locator(selector).all();
+              const results = [];
+              for (const element of elements) {
+                const value = attribute 
+                  ? await element.getAttribute(attribute)
+                  : await element.textContent();
+                results.push(value);
+              }
+              return {
+                content: [{ type: "text", text: JSON.stringify(results, null, 2) }],
+              };
             }
+            
+            // For single element, check if multiple elements match
+            const locator = page.locator(selector);
+            const count = await locator.count();
+            
+            if (count === 0) {
+              return {
+                content: [{ type: "text", text: "No elements found matching the selector" }],
+              };
+            }
+            
+            if (count > 1) {
+              // Get information about all matching elements
+              const elementInfo = [];
+              for (let i = 0; i < Math.min(count, 10); i++) {
+                const element = locator.nth(i);
+                const tagName = await element.evaluate(el => el.tagName.toLowerCase());
+                const text = await element.textContent();
+                const id = await element.getAttribute('id');
+                const className = await element.getAttribute('class');
+                const dataTestId = await element.getAttribute('data-testid');
+                
+                elementInfo.push({
+                  index: i,
+                  tagName,
+                  text: text?.substring(0, 100) || '',
+                  id: id || '',
+                  className: className?.substring(0, 50) || '',
+                  dataTestId: dataTestId || ''
+                });
+              }
+              
+              const errorMessage = `❌ Scrape failed: Found ${count} elements matching "${selector}". Please use a more specific selector.\n\nMatching elements:\n${elementInfo.map(el => 
+                `${el.index + 1}) <${el.tagName}${el.id ? ` id="${el.id}"` : ''}${el.className ? ` class="${el.className}"` : ''}${el.dataTestId ? ` data-testid="${el.dataTestId}"` : ''}>${el.text ? ` "${el.text}"` : ''}</${el.tagName}>`
+              ).join('\n')}\n\n💡 Suggestions:\n- Use a more specific selector (e.g., add an ID or class)\n- Use the "discover_elements" tool to find unique selectors\n- Use multiple: true to get all matching elements\n- Try: ${selector}:first-of-type or ${selector}:nth-child(1)`;
+              
+              return {
+                content: [{ type: "text", text: errorMessage }],
+              };
+            }
+            
+            // Single element found, proceed normally
+            const element = locator.first();
+            const value = attribute
+              ? await element.getAttribute(attribute)
+              : await element.textContent();
             return {
-              content: [{ type: "text", text: JSON.stringify(results, null, 2) }],
+              content: [{ type: "text", text: value || "" }],
             };
+            
+          } catch (error) {
+            if (error instanceof Error && error.message?.includes('strict mode violation')) {
+              // This shouldn't happen with our new logic, but just in case
+              const locator = page.locator(selector);
+              const count = await locator.count();
+              
+              return {
+                content: [{ 
+                  type: "text", 
+                  text: `❌ Strict mode violation: Found ${count} elements matching "${selector}". Use multiple: true to get all elements or make your selector more specific.` 
+                }],
+              };
+            }
+            throw error;
           }
-          const element = page.locator(selector);
-          const value = attribute
-            ? await element.getAttribute(attribute)
-            : await element.textContent();
-          return {
-            content: [{ type: "text", text: value || "" }],
-          };
         }
 
         case "click": {
@@ -1282,6 +1458,56 @@ class PlaywrightMCPServer {
           return {
             content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
           };
+        }
+
+        case "get_page_title": {
+          const page = await this.ensurePage();
+          
+          try {
+            // Try to get the main page title from head > title
+            const mainTitle = await page.locator('head > title').first().textContent();
+            if (mainTitle) {
+              return {
+                content: [{ type: "text", text: mainTitle }],
+              };
+            }
+            
+            // Fallback: look for any title element
+            const titleElements = await page.locator('title').all();
+            if (titleElements.length > 0) {
+              const titles = [];
+              for (const element of titleElements) {
+                const text = await element.textContent();
+                if (text) titles.push(text);
+              }
+              
+              if (titles.length === 1) {
+                return {
+                  content: [{ type: "text", text: titles[0] }],
+                };
+              } else {
+                return {
+                  content: [{ 
+                    type: "text", 
+                    text: `Found ${titles.length} title elements:\n${titles.map((t, i) => `${i + 1}) ${t}`).join('\n')}\n\nUsing first title: ${titles[0]}` 
+                  }],
+                };
+              }
+            }
+            
+            // No title found
+            return {
+              content: [{ type: "text", text: "No page title found" }],
+            };
+            
+          } catch (error) {
+            return {
+              content: [{ 
+                type: "text", 
+                text: `Error getting page title: ${error instanceof Error ? error.message : String(error)}` 
+              }],
+            };
+          }
         }
 
         default:
