@@ -429,6 +429,50 @@ class MCPHTTPPlaywrightServer {
                     type: "object",
                     properties: {}
                   }
+                },
+                {
+                  name: "assert_template",
+                  description: "Run custom assertions defined in a template",
+                  inputSchema: {
+                    type: "object",
+                    properties: {
+                      navigate: {
+                        type: "object",
+                        properties: {
+                          url: { type: "string", description: "URL to navigate to before assertions" },
+                          waitUntil: { type: "string", enum: ["load", "domcontentloaded", "networkidle"] },
+                          timeout: { type: "number" }
+                        }
+                      },
+                      assertions: {
+                        type: "array",
+                        items: {
+                          type: "object",
+                          properties: {
+                            type: { 
+                              type: "string",
+                              enum: [
+                                "page_title","page_url","visible","attached","hidden","detached","text","attribute","count","css","value","checked","enabled","in_viewport"
+                              ]
+                            },
+                            selector: { type: "string" },
+                            attribute: { type: "string" },
+                            name: { type: "string" },
+                            expected: { },
+                            contains: { type: "string" },
+                            regex: { type: "string" },
+                            flags: { type: "string" },
+                            count: { type: "number" },
+                            comparator: { type: "string", enum: ["equals","contains","matches","gt","gte","lt","lte"] },
+                            timeout: { type: "number" },
+                            ratio: { type: "number" },
+                          },
+                          required: ["type"]
+                        }
+                      }
+                    },
+                    required: ["assertions"]
+                  }
                 }
               ]
             };
