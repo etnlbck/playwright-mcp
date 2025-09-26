@@ -1751,7 +1751,13 @@ PlaywrightMCPServer.prototype.evaluateAssertionTemplate = async function(
   for (let i = 0; i < assertions.length; i++) {
     const a = assertions[i];
     const timeoutMs = a.timeout ?? 5000;
-    const result: AssertionResult = { index: i, type: a.type, selector: a.selector, passed: false, message: "" };
+    const result: AssertionResult = {
+      index: i,
+      type: a.type,
+      passed: false,
+      message: "",
+      ...(a.selector !== undefined ? { selector: a.selector } : {}),
+    };
 
     try {
       switch (a.type) {
