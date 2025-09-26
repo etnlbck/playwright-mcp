@@ -602,6 +602,12 @@ class PlaywrightMCPServer {
             const page = await this.ensurePage();
             
             try {
+            if (selector.includes(":contains")) {
+                return {
+                  content: [{ type: "text", text: "❌ Invalid selector: :contains pseudo-class is not supported. Use a different strategy such as CSS selectors combined with text filters or the discover_elements tool." }],
+                };
+              }
+              
               if (multiple) {
                 const elements = await page.locator(selector).all();
                 const results = [];
@@ -1310,11 +1316,17 @@ class PlaywrightMCPServer {
           };
         }
 
-        case "scrape": {
-          const { selector = "body", attribute, multiple = false } = ScrapeArgsSchema.parse(args);
+          case "scrape": {
+            const { selector = "body", attribute, multiple = false } = ScrapeArgsSchema.parse(args);
           const page = await this.ensurePage();
           
           try {
+              if (selector.includes(":contains")) {
+                return {
+                  content: [{ type: "text", text: "❌ Invalid selector: :contains pseudo-class is not supported. Use a different strategy such as CSS selectors combined with text filters or the discover_elements tool." }],
+                };
+              }
+              
             if (multiple) {
               const elements = await page.locator(selector).all();
               const results = [];
