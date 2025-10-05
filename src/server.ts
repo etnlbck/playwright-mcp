@@ -98,8 +98,6 @@ class PlaywrightMCPServer {
   private maxBrowserAge = 30 * 60 * 1000; // 30 minutes
   private retryCount = 0;
   private maxRetries = 3;
-  // Declaration for late-bound evaluator implementation
-  private evaluateAssertionTemplate!: (page: Page, assertions: AssertionCondition[]) => Promise<AssertionSummary>;
 
   constructor() {
     this.server = new Server(
@@ -1700,6 +1698,279 @@ class PlaywrightMCPServer {
       throw new Error(`Tool execution failed: ${error instanceof Error ? error.message : String(error)}`);
     }
   }
+
+  private async evaluateAssertionTemplate(page: Page, assertions: AssertionCondition[]): Promise<AssertionSummary> {
+    const results: AssertionResult[] = [];
+
+    const waitFor = async (fn: () => Promise<boolean>, timeoutMs = 5000, intervalMs = 200): Promise<boolean> => {
+      const start = Date.now();
+      while (Date.now() - start < timeoutMs) {
+        try {
+          if (await fn()) return true;
+        } catch {
+          // ignore predicate errors during wait
+        }
+        await new Promise(r => setTimeout(r, intervalMs));
+      }
+      return false;
+    };
+
+    const parseRegex = (pattern?: string, flags?: string): RegExp | null => {
+      if (!pattern) return null;
+      try {
+        // Support "/.../flags" or raw pattern
+        if (pattern.startsWith("/") && pattern.lastIndexOf("/") > 0) {
+          const last = pattern.lastIndexOf("/");
+          const body = pattern.slice(1, last);
+          const fl = pattern.slice(last + 1);
+          return new RegExp(body, fl);
+        }
+        return new RegExp(pattern, flags);
+      } catch {
+        return null;
+      }
+    };
+
+    for (let i = 0; i < assertions.length; i++) {
+      const a = assertions[i];
+      const timeoutMs = a.timeout ?? 5000;
+      const result: AssertionResult = {
+        index: i,
+        type: a.type,
+        passed: false,
+        message: "",
+        ...(a.selector !== undefined ? { selector: a.selector } : {}),
+      };
+
+      try {
+        switch (a.type) {
+          case "page_title": {
+            const ok = await waitFor(async () => {
+              const title = await page.title();
+              if (a.regex) {
+                const re = parseRegex(a.regex, a.flags || "");
+                return re ? re.test(title) : false;
+              }
+              if (typeof a.expected === "string") {
+                return a.comparator === "contains" ? title.includes(a.expected) : title === a.expected;
+              }
+              return false;
+            }, timeoutMs);
+            result.passed = ok;
+            result.message = ok ? "Page title assertion passed" : "Page title assertion failed";
+            break;
+          }
+
+          case "page_url": {
+            const ok = await waitFor(async () => {
+              const url = page.url();
+              if (a.regex) {
+                const re = parseRegex(a.regex, a.flags || "");
+                return re ? re.test(url) : false;
+              }
+              if (typeof a.expected === "string") {
+                return a.comparator === "contains" ? url.includes(a.expected) : url === a.expected;
+              }
+              return false;
+            }, timeoutMs);
+            result.passed = ok;
+            result.message = ok ? "Page URL assertion passed" : "Page URL assertion failed";
+            break;
+          }
+
+          case "visible": {
+            if (!a.selector) throw new Error("selector is required for visible");
+            const ok = await waitFor(async () => await page.locator(a.selector!).isVisible(), timeoutMs);
+            result.passed = ok;
+            result.message = ok ? `Element ${a.selector} is visible` : `Element ${a.selector} not visible`;
+            break;
+          }
+
+          case "attached": {
+            if (!a.selector) throw new Error("selector is required for attached");
+            const ok = await waitFor(async () => (await page.locator(a.selector!).count()) > 0, timeoutMs);
+            result.passed = ok;
+            result.message = ok ? `Element ${a.selector} is attached` : `Element ${a.selector} not attached`;
+            break;
+          }
+
+          case "hidden": {
+            if (!a.selector) throw new Error("selector is required for hidden");
+            const ok = await waitFor(async () => await page.locator(a.selector!).isHidden(), timeoutMs);
+            result.passed = ok;
+            result.message = ok ? `Element ${a.selector} is hidden` : `Element ${a.selector} not hidden`;
+            break;
+          }
+
+          case "detached": {
+            if (!a.selector) throw new Error("selector is required for detached");
+            const ok = await waitFor(async () => (await page.locator(a.selector!).count()) === 0, timeoutMs);
+            result.passed = ok;
+            result.message = ok ? `Element ${a.selector} is detached` : `Element ${a.selector} still attached`;
+            break;
+          }
+
+          case "text": {
+            if (!a.selector) throw new Error("selector is required for text");
+            const ok = await waitFor(async () => {
+              const txt = await page.locator(a.selector!).first().textContent();
+              const text = txt ?? "";
+              if (a.regex) {
+                const re = parseRegex(a.regex, a.flags || "");
+                return re ? re.test(text) : false;
+              }
+              if (typeof a.expected === "string") {
+                return a.comparator === "contains" || a.contains ? text.includes(a.expected) : text === a.expected;
+              }
+              return false;
+            }, timeoutMs);
+            result.passed = ok;
+            result.message = ok ? `Text assertion passed for ${a.selector}` : `Text assertion failed for ${a.selector}`;
+            break;
+          }
+
+          case "attribute": {
+            if (!a.selector || !a.attribute) throw new Error("selector and attribute are required for attribute assertion");
+            const ok = await waitFor(async () => {
+              const value = await page.locator(a.selector!).first().getAttribute(a.attribute!);
+              const val = value ?? "";
+              if (a.regex) {
+                const re = parseRegex(a.regex, a.flags || "");
+                return re ? re.test(val) : false;
+              }
+              if (a.expected !== undefined && a.comparator !== "contains" && a.comparator !== "matches") {
+                return String(val) === String(a.expected);
+              }
+              if (a.contains) return val.includes(a.contains);
+              return false;
+            }, timeoutMs);
+            result.passed = ok;
+            result.message = ok ? `Attribute assertion passed for ${a.selector}` : `Attribute assertion failed for ${a.selector}`;
+            break;
+          }
+
+          case "count": {
+            if (!a.selector) throw new Error("selector is required for count");
+            const comparator = a.comparator || "equals";
+            const expectedCount = a.count ?? (typeof a.expected === "number" ? a.expected : undefined);
+            if (expectedCount === undefined) throw new Error("count or expected number is required for count assertion");
+            const ok = await waitFor(async () => {
+              const c = await page.locator(a.selector!).count();
+              switch (comparator) {
+                case "equals": return c === expectedCount;
+                case "gt": return c > expectedCount;
+                case "gte": return c >= expectedCount;
+                case "lt": return c < expectedCount;
+                case "lte": return c <= expectedCount;
+                default: return c === expectedCount;
+              }
+            }, timeoutMs);
+            result.passed = ok;
+            result.details = { comparator, expected: expectedCount };
+            result.message = ok ? `Count assertion passed for ${a.selector}` : `Count assertion failed for ${a.selector}`;
+            break;
+          }
+
+          case "css": {
+            if (!a.selector || !a.name) throw new Error("selector and name are required for css assertion");
+            const ok = await waitFor(async () => {
+              const value = await page.locator(a.selector!).first().evaluate((el, prop) => {
+                // execute in browser context without relying on DOM typings
+                const gs = (globalThis as any).getComputedStyle(el as any);
+                return gs.getPropertyValue(String(prop));
+              }, a.name);
+              if (a.expected !== undefined) {
+                return String(value).trim() === String(a.expected).trim();
+              }
+              if (a.contains) return String(value).includes(a.contains);
+              if (a.regex) {
+                const re = parseRegex(a.regex, a.flags || "");
+                return re ? re.test(String(value)) : false;
+              }
+              return false;
+            }, timeoutMs);
+            result.passed = ok;
+            result.message = ok ? `CSS assertion passed for ${a.selector}` : `CSS assertion failed for ${a.selector}`;
+            break;
+          }
+
+          case "value": {
+            if (!a.selector) throw new Error("selector is required for value assertion");
+            const ok = await waitFor(async () => {
+              const value = await page
+                .locator(a.selector!)
+                .first()
+                .inputValue()
+                .catch(async () => (await page.locator(a.selector!).first().textContent()) ?? "");
+              const val = value ?? "";
+              if (a.expected !== undefined) return String(val) === String(a.expected);
+              if (a.contains) return String(val).includes(a.contains);
+              if (a.regex) {
+                const re = parseRegex(a.regex, a.flags || "");
+                return re ? re.test(String(val)) : false;
+              }
+              return false;
+            }, timeoutMs);
+            result.passed = ok;
+            result.message = ok ? `Value assertion passed for ${a.selector}` : `Value assertion failed for ${a.selector}`;
+            break;
+          }
+
+          case "checked": {
+            if (!a.selector) throw new Error("selector is required for checked assertion");
+            const expected = (typeof a.expected === "boolean") ? a.expected : true;
+            const ok = await waitFor(async () => (await page.locator(a.selector!).first().isChecked()) === expected, timeoutMs);
+            result.passed = ok;
+            result.details = { expected };
+            result.message = ok ? `Checked assertion passed for ${a.selector}` : `Checked assertion failed for ${a.selector}`;
+            break;
+          }
+
+          case "enabled": {
+            if (!a.selector) throw new Error("selector is required for enabled assertion");
+            const expected = (typeof a.expected === "boolean") ? a.expected : true;
+            const ok = await waitFor(async () => (await page.locator(a.selector!).first().isEnabled()) === expected, timeoutMs);
+            result.passed = ok;
+            result.details = { expected };
+            result.message = ok ? `Enabled assertion passed for ${a.selector}` : `Enabled assertion failed for ${a.selector}`;
+            break;
+          }
+
+          case "in_viewport": {
+            if (!a.selector) throw new Error("selector is required for in_viewport assertion");
+            const minRatio = a.ratio ?? 0.0;
+            const ok = await waitFor(async () => {
+              const box = await page.locator(a.selector!).first().boundingBox();
+              const vw = await page.viewportSize();
+              if (!box || !vw) return false;
+              const interLeft = Math.max(0, Math.min(box.x + box.width, vw.width) - Math.max(box.x, 0));
+              const interTop = Math.max(0, Math.min(box.y + box.height, vw.height) - Math.max(box.y, 0));
+              const interArea = interLeft * interTop;
+              const area = box.width * box.height;
+              const ratio = area > 0 ? interArea / area : 0;
+              return ratio >= minRatio;
+            }, timeoutMs);
+            result.passed = ok;
+            result.details = { ratio: minRatio };
+            result.message = ok ? `In-viewport assertion passed for ${a.selector}` : `In-viewport assertion failed for ${a.selector}`;
+            break;
+          }
+
+          default:
+            throw new Error(`Unsupported assertion type: ${a.type}`);
+        }
+      } catch (err) {
+        result.passed = false;
+        result.message = err instanceof Error ? err.message : String(err);
+      }
+
+      results.push(result);
+    }
+
+    const passed = results.filter(r => r.passed).length;
+    const failed = results.length - passed;
+    return { total: results.length, passed, failed, results };
+  }
 }
 
 // Helper types for assertion results
@@ -1720,281 +1991,5 @@ interface AssertionSummary {
   failed: number;
   results: AssertionResult[];
 }
-
-// Extend class prototype with evaluator to keep file organization flat
-// eslint-disable-next-line @typescript-eslint/ban-ts-comment
-// @ts-ignore
-PlaywrightMCPServer.prototype.evaluateAssertionTemplate = async function(
-  this: PlaywrightMCPServer,
-  page: Page,
-  assertions: AssertionCondition[]
-): Promise<AssertionSummary> {
-  const results: AssertionResult[] = [];
-
-  const waitFor = async (fn: () => Promise<boolean>, timeoutMs = 5000, intervalMs = 200): Promise<boolean> => {
-    const start = Date.now();
-    while (Date.now() - start < timeoutMs) {
-      try {
-        if (await fn()) return true;
-      } catch {
-        // ignore predicate errors during wait
-      }
-      await new Promise(r => setTimeout(r, intervalMs));
-    }
-    return false;
-  };
-
-  const parseRegex = (pattern?: string, flags?: string): RegExp | null => {
-    if (!pattern) return null;
-    try {
-      // Support "/.../flags" or raw pattern
-      if (pattern.startsWith("/") && pattern.lastIndexOf("/") > 0) {
-        const last = pattern.lastIndexOf("/");
-        const body = pattern.slice(1, last);
-        const fl = pattern.slice(last + 1);
-        return new RegExp(body, fl);
-      }
-      return new RegExp(pattern, flags);
-    } catch {
-      return null;
-    }
-  };
-
-  for (let i = 0; i < assertions.length; i++) {
-    const a = assertions[i];
-    const timeoutMs = a.timeout ?? 5000;
-    const result: AssertionResult = {
-      index: i,
-      type: a.type,
-      passed: false,
-      message: "",
-      ...(a.selector !== undefined ? { selector: a.selector } : {}),
-    };
-
-    try {
-      switch (a.type) {
-        case "page_title": {
-          const ok = await waitFor(async () => {
-            const title = await page.title();
-            if (a.regex) {
-              const re = parseRegex(a.regex, a.flags || "");
-              return re ? re.test(title) : false;
-            }
-            if (typeof a.expected === "string") {
-              return a.comparator === "contains" ? title.includes(a.expected) : title === a.expected;
-            }
-            return false;
-          }, timeoutMs);
-          result.passed = ok;
-          result.message = ok ? "Page title assertion passed" : "Page title assertion failed";
-          break;
-        }
-
-        case "page_url": {
-          const ok = await waitFor(async () => {
-            const url = page.url();
-            if (a.regex) {
-              const re = parseRegex(a.regex, a.flags || "");
-              return re ? re.test(url) : false;
-            }
-            if (typeof a.expected === "string") {
-              return a.comparator === "contains" ? url.includes(a.expected) : url === a.expected;
-            }
-            return false;
-          }, timeoutMs);
-          result.passed = ok;
-          result.message = ok ? "Page URL assertion passed" : "Page URL assertion failed";
-          break;
-        }
-
-        case "visible": {
-          if (!a.selector) throw new Error("selector is required for visible");
-          const ok = await waitFor(async () => await page.locator(a.selector!).isVisible(), timeoutMs);
-          result.passed = ok;
-          result.message = ok ? `Element ${a.selector} is visible` : `Element ${a.selector} not visible`;
-          break;
-        }
-
-        case "attached": {
-          if (!a.selector) throw new Error("selector is required for attached");
-          const ok = await waitFor(async () => (await page.locator(a.selector!).count()) > 0, timeoutMs);
-          result.passed = ok;
-          result.message = ok ? `Element ${a.selector} is attached` : `Element ${a.selector} not attached`;
-          break;
-        }
-
-        case "hidden": {
-          if (!a.selector) throw new Error("selector is required for hidden");
-          const ok = await waitFor(async () => await page.locator(a.selector!).isHidden(), timeoutMs);
-          result.passed = ok;
-          result.message = ok ? `Element ${a.selector} is hidden` : `Element ${a.selector} not hidden`;
-          break;
-        }
-
-        case "detached": {
-          if (!a.selector) throw new Error("selector is required for detached");
-          const ok = await waitFor(async () => (await page.locator(a.selector!).count()) === 0, timeoutMs);
-          result.passed = ok;
-          result.message = ok ? `Element ${a.selector} is detached` : `Element ${a.selector} still attached`;
-          break;
-        }
-
-        case "text": {
-          if (!a.selector) throw new Error("selector is required for text");
-          const ok = await waitFor(async () => {
-            const txt = await page.locator(a.selector!).first().textContent();
-            const text = txt ?? "";
-            if (a.regex) {
-              const re = parseRegex(a.regex, a.flags || "");
-              return re ? re.test(text) : false;
-            }
-            if (typeof a.expected === "string") {
-              return a.comparator === "contains" || a.contains ? text.includes(a.expected) : text === a.expected;
-            }
-            return false;
-          }, timeoutMs);
-          result.passed = ok;
-          result.message = ok ? `Text assertion passed for ${a.selector}` : `Text assertion failed for ${a.selector}`;
-          break;
-        }
-
-        case "attribute": {
-          if (!a.selector || !a.attribute) throw new Error("selector and attribute are required for attribute assertion");
-          const ok = await waitFor(async () => {
-            const value = await page.locator(a.selector!).first().getAttribute(a.attribute!);
-            const val = value ?? "";
-            if (a.regex) {
-              const re = parseRegex(a.regex, a.flags || "");
-              return re ? re.test(val) : false;
-            }
-            if (a.expected !== undefined && a.comparator !== "contains" && a.comparator !== "matches") {
-              return String(val) === String(a.expected);
-            }
-            if (a.contains) return val.includes(a.contains);
-            return false;
-          }, timeoutMs);
-          result.passed = ok;
-          result.message = ok ? `Attribute assertion passed for ${a.selector}` : `Attribute assertion failed for ${a.selector}`;
-          break;
-        }
-
-        case "count": {
-          if (!a.selector) throw new Error("selector is required for count");
-          const comparator = a.comparator || "equals";
-          const expectedCount = a.count ?? (typeof a.expected === "number" ? a.expected : undefined);
-          if (expectedCount === undefined) throw new Error("count or expected number is required for count assertion");
-          const ok = await waitFor(async () => {
-            const c = await page.locator(a.selector!).count();
-            switch (comparator) {
-              case "equals": return c === expectedCount;
-              case "gt": return c > expectedCount;
-              case "gte": return c >= expectedCount;
-              case "lt": return c < expectedCount;
-              case "lte": return c <= expectedCount;
-              default: return c === expectedCount;
-            }
-          }, timeoutMs);
-          result.passed = ok;
-          result.details = { comparator, expected: expectedCount };
-          result.message = ok ? `Count assertion passed for ${a.selector}` : `Count assertion failed for ${a.selector}`;
-          break;
-        }
-
-        case "css": {
-          if (!a.selector || !a.name) throw new Error("selector and name are required for css assertion");
-          const ok = await waitFor(async () => {
-            const value = await page.locator(a.selector!).first().evaluate((el, prop) => {
-              // execute in browser context without relying on DOM typings
-              const gs = (globalThis as any).getComputedStyle(el as any);
-              return gs.getPropertyValue(String(prop));
-            }, a.name);
-            if (a.expected !== undefined) {
-              return String(value).trim() === String(a.expected).trim();
-            }
-            if (a.contains) return String(value).includes(a.contains);
-            if (a.regex) {
-              const re = parseRegex(a.regex, a.flags || "");
-              return re ? re.test(String(value)) : false;
-            }
-            return false;
-          }, timeoutMs);
-          result.passed = ok;
-          result.message = ok ? `CSS assertion passed for ${a.selector}` : `CSS assertion failed for ${a.selector}`;
-          break;
-        }
-
-        case "value": {
-          if (!a.selector) throw new Error("selector is required for value assertion");
-          const ok = await waitFor(async () => {
-            const value = await page.locator(a.selector!).first().inputValue().catch(async () => (await page.locator(a.selector!).first().textContent()) ?? "");
-            const val = value ?? "";
-            if (a.expected !== undefined) return String(val) === String(a.expected);
-            if (a.contains) return String(val).includes(a.contains);
-            if (a.regex) {
-              const re = parseRegex(a.regex, a.flags || "");
-              return re ? re.test(String(val)) : false;
-            }
-            return false;
-          }, timeoutMs);
-          result.passed = ok;
-          result.message = ok ? `Value assertion passed for ${a.selector}` : `Value assertion failed for ${a.selector}`;
-          break;
-        }
-
-        case "checked": {
-          if (!a.selector) throw new Error("selector is required for checked assertion");
-          const expected = (typeof a.expected === "boolean") ? a.expected : true;
-          const ok = await waitFor(async () => (await page.locator(a.selector!).first().isChecked()) === expected, timeoutMs);
-          result.passed = ok;
-          result.details = { expected };
-          result.message = ok ? `Checked assertion passed for ${a.selector}` : `Checked assertion failed for ${a.selector}`;
-          break;
-        }
-
-        case "enabled": {
-          if (!a.selector) throw new Error("selector is required for enabled assertion");
-          const expected = (typeof a.expected === "boolean") ? a.expected : true;
-          const ok = await waitFor(async () => (await page.locator(a.selector!).first().isEnabled()) === expected, timeoutMs);
-          result.passed = ok;
-          result.details = { expected };
-          result.message = ok ? `Enabled assertion passed for ${a.selector}` : `Enabled assertion failed for ${a.selector}`;
-          break;
-        }
-
-        case "in_viewport": {
-          if (!a.selector) throw new Error("selector is required for in_viewport assertion");
-          const minRatio = a.ratio ?? 0.0;
-          const ok = await waitFor(async () => {
-            const box = await page.locator(a.selector!).first().boundingBox();
-            const vw = await page.viewportSize();
-            if (!box || !vw) return false;
-            const interLeft = Math.max(0, Math.min(box.x + box.width, vw.width) - Math.max(box.x, 0));
-            const interTop = Math.max(0, Math.min(box.y + box.height, vw.height) - Math.max(box.y, 0));
-            const interArea = interLeft * interTop;
-            const area = box.width * box.height;
-            const ratio = area > 0 ? interArea / area : 0;
-            return ratio >= minRatio;
-          }, timeoutMs);
-          result.passed = ok;
-          result.details = { ratio: minRatio };
-          result.message = ok ? `In-viewport assertion passed for ${a.selector}` : `In-viewport assertion failed for ${a.selector}`;
-          break;
-        }
-
-        default:
-          throw new Error(`Unsupported assertion type: ${a.type}`);
-      }
-    } catch (err) {
-      result.passed = false;
-      result.message = err instanceof Error ? err.message : String(err);
-    }
-
-    results.push(result);
-  }
-
-  const passed = results.filter(r => r.passed).length;
-  const failed = results.length - passed;
-  return { total: results.length, passed, failed, results };
-};
 
 export { PlaywrightMCPServer };
