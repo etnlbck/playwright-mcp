@@ -3,13 +3,13 @@ import { HTTPPlaywrightServer } from "../adapters/http-server.js";
 import { MCPHTTPPlaywrightServer } from "./mcp-http-server.js";
 
 export async function startServer(mode: string, port: number): Promise<void> {
-  console.log(`Raw PORT env: "${process.env.PORT}"`);
+  console.log(`Raw PORT env: "${process.env['PORT']}"`);
   console.log('All PORT-related env vars:', Object.keys(process.env).filter(k => k.includes('PORT')));
   console.log(`Node version: ${process.version}`);
   console.log(`Platform: ${process.platform} ${process.arch}`);
 
   // Safety check: If we have a PORT but mode isn't http, something's wrong
-  const portEnv = process.env.PORT;
+  const portEnv = process.env['PORT'];
   if (portEnv && mode !== "http") {
     console.warn(`⚠️ WARNING: PORT provided (${portEnv}) but mode is ${mode}. Forcing HTTP mode for Railway compatibility.`);
     const httpServer = new MCPHTTPPlaywrightServer(port);
@@ -48,8 +48,8 @@ export async function startServer(mode: string, port: number): Promise<void> {
 
 // CLI execution (for backward compatibility)
 if (process.argv[1] && process.argv[1].endsWith('index.ts')) {
-  const portEnv = process.env.PORT;
-  const explicitMode = process.env.MODE;
+  const portEnv = process.env['PORT'];
+  const explicitMode = process.env['MODE'];
   const mode = explicitMode || (portEnv ? "http" : "stdio");
   const port = portEnv ? Number.parseInt(portEnv, 10) : 3000;
 
