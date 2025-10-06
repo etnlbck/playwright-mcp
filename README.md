@@ -156,4 +156,4 @@ Add to your MCP client configuration:
 
 ## 📄 License
 
-[Add your license information here]
+MIT
