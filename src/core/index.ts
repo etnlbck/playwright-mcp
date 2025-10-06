@@ -47,7 +47,7 @@ export async function startServer(mode: string, port: number): Promise<void> {
 }
 
 // CLI execution (for backward compatibility)
-if (import.meta.url === `file://${process.argv[1]}`) {
+if (process.argv[1] && process.argv[1].endsWith('index.ts')) {
   const portEnv = process.env.PORT;
   const explicitMode = process.env.MODE;
   const mode = explicitMode || (portEnv ? "http" : "stdio");
