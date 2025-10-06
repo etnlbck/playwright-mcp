@@ -1,7 +1,10 @@
-import express from "express";
+import express, { type Request, type Response, type NextFunction } from "express";
 import cors from "cors";
 import helmet from "helmet";
 import { PlaywrightMCPServer } from "./server.js";
+import { AuthManager } from "./auth-manager.js";
+import { AdminServer } from "./admin-server.js";
+import { initializeDatabase, testDatabaseConnection, setupGracefulShutdown } from './database/config.js';
 import { z } from "zod";
 import { join } from "path";
 
@@ -26,34 +29,196 @@ const JSONRPCResponseSchema = z.object({
 class MCPHTTPPlaywrightServer {
   private app: express.Application;
   private mcpServer: PlaywrightMCPServer;
+  private authManager: AuthManager;
+  private adminServer!: AdminServer;
   private port: number;
   private server: any;
   private keepAliveInterval: NodeJS.Timeout | null = null;
   private healthCheckInterval: NodeJS.Timeout | null = null;
   private lastActivity: number = Date.now();
   private isShuttingDown = false;
+  private authToken: string | null;
+  private authBypassPaths: Set<string>;
 
   constructor(port = 3000) {
     this.app = express();
     this.mcpServer = new PlaywrightMCPServer();
+    this.authManager = new AuthManager();
     this.port = port;
+    this.authToken = process.env["PLAYWRIGHT_MCP_AUTH_TOKEN"] || process.env["MCP_AUTH_TOKEN"] || null;
+    const defaultBypass = ["/health", "/ready", "/keepalive", "/status", "/admin"];
+    const additionalBypass = (process.env["PLAYWRIGHT_MCP_PUBLIC_PATHS"] || "")
+      .split(",")
+      .map(path => path.trim())
+      .filter(path => path.length > 0);
+    this.authBypassPaths = new Set([...defaultBypass, ...additionalBypass]);
     this.setupMiddleware();
-    this.setupRoutes();
     this.setupProcessHandlers();
     this.startKeepAlive();
   }
 
   private setupMiddleware(): void {
-    this.app.use(helmet());
+    this.app.use(helmet({
+      contentSecurityPolicy: {
+        directives: {
+          defaultSrc: ["'self'"],
+          scriptSrc: ["'self'", "'unsafe-inline'", "'unsafe-hashes'"],
+          styleSrc: ["'self'", "'unsafe-inline'"],
+          imgSrc: ["'self'", "data:"],
+          connectSrc: ["'self'"],
+          fontSrc: ["'self'", "https:", "data:"],
+          objectSrc: ["'none'"],
+          mediaSrc: ["'self'"],
+          frameSrc: ["'none'"],
+        },
+      },
+    }));
     this.app.use(cors());
     this.app.use(express.json({ limit: "10mb" }));
     this.app.use(express.urlencoded({ extended: true }));
+
+    this.setupAuthMiddleware();
     
     // Track activity for keepalive
     this.app.use((req, res, next) => {
       this.lastActivity = Date.now();
       next();
     });
+  }
+
+  private async initializeAuth(): Promise<void> {
+    try {
+      console.log("🔐 Initializing authentication system...");
+      
+      // Test database connection first
+      console.log("🔍 Testing database connection...");
+      const dbConnected = await testDatabaseConnection();
+      if (!dbConnected) {
+        throw new Error("Failed to connect to database");
+      }
+      console.log("✅ Database connection successful");
+      
+      // Initialize database schema
+      console.log("📋 Initializing database schema...");
+      const dbInitialized = await initializeDatabase();
+      if (!dbInitialized) {
+        throw new Error("Failed to initialize database schema");
+      }
+      console.log("✅ Database schema initialized");
+      
+      // Initialize AuthManager
+      console.log("👤 Initializing AuthManager...");
+      await this.authManager.initialize();
+      console.log("✅ AuthManager initialized");
+      
+      // Initialize AdminServer
+      console.log("🛠️ Initializing AdminServer...");
+      this.adminServer = new AdminServer(this.authManager);
+      console.log("✅ AdminServer initialized");
+      
+      // Setup routes after admin server is initialized
+      console.log("🛣️ Setting up routes...");
+      this.setupRoutes();
+      console.log("✅ Routes setup complete");
+      
+      // Setup graceful shutdown
+      setupGracefulShutdown();
+      
+      console.log(`🔑 Admin token: ${this.authManager.getAdminToken()}`);
+      console.log("✅ Authentication system initialized");
+    } catch (error) {
+      console.error("❌ Authentication initialization failed:", error);
+      throw error;
+    }
+  }
+
+  private setupAuthMiddleware(): void {
+    console.log("🔐 Setting up authentication middleware with ACL support");
+
+    this.app.use(async (req: Request, res: Response, next: NextFunction) => {
+      if (this.isPublicRoute(req)) {
+        return next();
+      }
+
+      const token = this.extractAuthToken(req);
+      if (!token) {
+        console.warn(`🚫 No auth token provided for ${req.method} ${req.path} from ${req.ip}`);
+        res.setHeader("WWW-Authenticate", "Bearer");
+        res.status(401).json({ error: "Authentication required" });
+        return;
+      }
+
+      // Check legacy single token auth first
+      if (this.authToken && constantTimeCompare(token, this.authToken)) {
+        return next();
+      }
+
+      // Check ACL-based auth
+      const auth = await this.authManager.authenticateAPIKey(token);
+      if (!auth) {
+        console.warn(`🚫 Invalid API key for ${req.method} ${req.path} from ${req.ip}`);
+        res.setHeader("WWW-Authenticate", "Bearer");
+        res.status(401).json({ error: "Invalid API key" });
+        return;
+      }
+
+      // Check tool permissions for MCP calls
+      if (req.path === "/mcp" && req.method === "POST") {
+        const toolName = req.body?.params?.name;
+        if (toolName) {
+          const hasPermission = this.authManager.hasPermission(auth.apiKey.permissions, `tools:${toolName}`);
+          if (!hasPermission) {
+            console.warn(`🚫 User ${auth.user.email} lacks permission for tool: ${toolName}`);
+            res.status(403).json({ error: `Insufficient permissions for tool: ${toolName}` });
+            return;
+          }
+        }
+      }
+
+      // Add user context to request for logging/audit
+      (req as any).user = auth.user;
+      (req as any).apiKey = auth.apiKey;
+      
+      next();
+    });
+  }
+
+  private isPublicRoute(req: Request): boolean {
+    // Admin interface is always public (has its own auth)
+    if (req.path.startsWith("/admin")) {
+      return true;
+    }
+
+    // If no auth system is configured, everything is public
+    if (!this.authToken && !this.authManager) {
+      return true;
+    }
+
+    // Health/status endpoints are always public
+    if (req.method === "GET" && this.authBypassPaths.has(req.path)) {
+      return true;
+    }
+
+    return false;
+  }
+
+  private extractAuthToken(req: Request): string | null {
+    const authHeader = req.headers["authorization"];
+    if (typeof authHeader === "string" && authHeader.startsWith("Bearer ")) {
+      return authHeader.slice(7).trim();
+    }
+
+    const apiKeyHeader = req.headers["x-api-key"];
+    if (typeof apiKeyHeader === "string" && apiKeyHeader.length > 0) {
+      return apiKeyHeader.trim();
+    }
+
+    const queryToken = req.query["api_key"];
+    if (typeof queryToken === "string" && queryToken.length > 0) {
+      return queryToken;
+    }
+
+    return null;
   }
 
   private setupProcessHandlers(): void {
@@ -159,6 +324,15 @@ class MCPHTTPPlaywrightServer {
   }
 
   private setupRoutes(): void {
+    // Mount admin interface
+    if (this.adminServer) {
+      console.log('🛣️ Mounting admin server at /admin');
+      this.app.use('/admin', this.adminServer.getApp());
+      console.log('✅ Admin server mounted successfully');
+    } else {
+      console.error('❌ AdminServer not initialized, skipping admin routes');
+    }
+
     // Root endpoint - provide server information
     this.app.get('/', (req, res) => {
       res.json({
@@ -171,7 +345,8 @@ class MCPHTTPPlaywrightServer {
           health: 'GET /health - Health check',
           tools: 'GET /tools - List available tools',
           ready: 'GET /ready - Browser readiness check',
-          keepalive: 'GET /keepalive - Keep-alive endpoint'
+          keepalive: 'GET /keepalive - Keep-alive endpoint',
+          admin: 'GET /admin - Admin dashboard for user and API key management'
         },
         timestamp: new Date().toISOString(),
         uptime: process.uptime()
@@ -595,31 +770,55 @@ class MCPHTTPPlaywrightServer {
   }
 
   async start(): Promise<void> {
-    return new Promise((resolve, reject) => {
-      try {
-        this.server = this.app.listen(this.port, () => {
-          console.log(`🚀 MCP HTTP Server started on port ${this.port}`);
-          console.log(`📡 MCP endpoint: http://localhost:${this.port}/mcp`);
-          console.log(`🏥 Health check: http://localhost:${this.port}/health`);
-          console.log(`🛠️ Tools list: http://localhost:${this.port}/tools`);
-          resolve();
-        });
-        
-        this.server.on('error', (error: any) => {
-          if (error.code === 'EADDRINUSE') {
-            console.error(`❌ Port ${this.port} is already in use`);
-          } else {
-            console.error('❌ Server error:', error);
-          }
+    try {
+      // Initialize auth first
+      await this.initializeAuth();
+      
+      // Now start the server
+      return new Promise((resolve, reject) => {
+        try {
+          this.server = this.app.listen(this.port, () => {
+            console.log(`🚀 MCP HTTP Server started on port ${this.port}`);
+            console.log(`📡 MCP endpoint: http://localhost:${this.port}/mcp`);
+            console.log(`🏥 Health check: http://localhost:${this.port}/health`);
+            console.log(`🛠️ Tools list: http://localhost:${this.port}/tools`);
+            console.log(`🔐 Admin dashboard: http://localhost:${this.port}/admin`);
+            console.log(`🔑 Admin token: ${this.authManager.getAdminToken()}`);
+            resolve();
+          });
+          
+          this.server.on('error', (error: any) => {
+            if (error.code === 'EADDRINUSE') {
+              console.error(`❌ Port ${this.port} is already in use`);
+            } else {
+              console.error('❌ Server error:', error);
+            }
+            reject(error);
+          });
+          
+        } catch (error) {
+          console.error('❌ Failed to start server:', error);
           reject(error);
-        });
-        
-      } catch (error) {
-        console.error('❌ Failed to start server:', error);
-        reject(error);
-      }
-    });
+        }
+      });
+    } catch (error) {
+      console.error("❌ Failed to start server:", error);
+      throw error;
+    }
   }
 }
 
 export { MCPHTTPPlaywrightServer };
+
+// Simple timing-safe string comparison to mitigate timing attacks on auth tokens
+function constantTimeCompare(a: string, b: string): boolean {
+  if (a.length !== b.length) {
+    return false;
+  }
+
+  let result = 0;
+  for (let i = 0; i < a.length; i++) {
+    result |= a.charCodeAt(i) ^ b.charCodeAt(i);
+  }
+  return result === 0;
+}
