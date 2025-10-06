@@ -1,7 +1,7 @@
 import express from "express";
 import cors from "cors";
 import helmet from "helmet";
-import { PlaywrightMCPServer } from "./server.js";
+import { PlaywrightMCPServer } from "../core/server.js";
 import { z } from "zod";
 
 const ToolCallSchema = z.object({

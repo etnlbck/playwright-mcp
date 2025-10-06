@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-import { HTTPPlaywrightServer } from "./http-server.js";
+import { HTTPPlaywrightServer } from "../adapters/http-server.js";
 
 class ServerMonitor {
   private server: HTTPPlaywrightServer;

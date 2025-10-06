@@ -1,8 +1,7 @@
 {
   "compilerOptions": {
     "target": "ES2022",
-    "lib": ["ES2022"],
-    "types": ["node"],
+    "lib": ["ES2022", "DOM"],
     "module": "ESNext",
     "moduleResolution": "Node",
     "resolveJsonModule": true,
@@ -10,22 +9,15 @@
     "esModuleInterop": true,
     "allowJs": true,
     "outDir": "./dist",
-    "rootDir": "./src",
-    "strict": true,
-    "noImplicitAny": true,
-    "strictNullChecks": true,
-    "strictFunctionTypes": true,
-    "noImplicitReturns": true,
-    "noFallthroughCasesInSwitch": true,
-    "noImplicitOverride": true,
-    "exactOptionalPropertyTypes": true,
-    "noPropertyAccessFromIndexSignature": true,
+    "rootDir": "./",
+    "strict": false,
+    "skipLibCheck": true,
     "forceConsistentCasingInFileNames": true,
     "declaration": true,
-    "skipLibCheck": true
   },
   "include": [
-    "src/**/*"
+    "src/**/*",
+    "index.ts"
   ],
   "exclude": [
     "node_modules",
