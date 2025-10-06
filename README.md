@@ -1,137 +1,159 @@
 # Playwright MCP Server
 
-A custom Playwright MCP (Model Context Protocol) server that runs on Railway with streamable HTTP support.
+A Model Context Protocol (MCP) server that exposes Playwright browser automation capabilities as tools for AI agents.
 
-## Features
+## 🏗️ Project Structure
 
-- **MCP Protocol Support**: Fully compatible with MCP standards
-- **HTTP Streaming**: Real-time streaming responses via Server-Sent Events
-- **Playwright Integration**: Complete browser automation capabilities
-- **Railway Deployment**: Optimized for Railway cloud platform
-- **Docker Support**: Containerized deployment with all dependencies
-
-## Available Tools
-
-- `navigate` - Navigate to a URL with configurable wait conditions
-- `screenshot` - Capture full or partial page screenshots
-- `scrape` - Extract text or attributes from page elements
-- `click` - Click on elements using CSS selectors
-- `type` - Input text into form elements
-- `wait_for` - Wait for elements or conditions
-- `get_url` - Get current page URL
-- `close_browser` - Clean up browser resources
-
-## API Endpoints
-
-### HTTP Mode
-
-- `GET /health` - Health check endpoint
-- `GET /tools` - List available tools
-- `POST /execute` - Execute tools with streaming response (SSE)
-- `POST /execute-sync` - Execute tools with synchronous response
-
-### Example Usage
-
-```bash
-# List tools
-curl http://localhost:3000/tools
-
-# Execute a tool with streaming
-curl -X POST http://localhost:3000/execute \\
-  -H "Content-Type: application/json" \\
-  -d '{"tool": "navigate", "arguments": {"url": "https://example.com"}}'
-
-# Execute a tool synchronously
-curl -X POST http://localhost:3000/execute-sync \\
-  -H "Content-Type: application/json" \\
-  -d '{"tool": "screenshot", "arguments": {"fullPage": true}}'
+```
+playwrightMCP/
+├── src/                          # Source code
+│   ├── core/                     # Core server functionality
+│   │   ├── index.ts             # Main server entry point
+│   │   ├── server.ts            # PlaywrightMCPServer class
+│   │   └── mcp-http-server.ts   # HTTP MCP server
+│   ├── adapters/                 # Server adapters
+│   │   ├── http-mcp-adapter.ts  # HTTP MCP adapter
+│   │   ├── http-server.ts       # HTTP server
+│   │   ├── minimal-server.ts    # Minimal server
+│   │   └── railway-mcp-adapter.ts # Railway adapter
+│   ├── clients/                  # Client implementations
+│   │   └── mcp-client.ts        # MCP client
+│   ├── monitoring/               # Monitoring and health checks
+│   │   ├── monitor.ts           # Server monitor
+│   │   └── keepalive.js         # Keep-alive script
+│   ├── types/                    # TypeScript type definitions
+│   └── utils/                    # Utility functions
+├── config/                       # Configuration files
+│   ├── environments/             # Environment-specific configs
+│   │   ├── claude-desktop-*.json
+│   │   └── railway-mcp-adapter-config.json
+│   └── deployments/              # Deployment configurations
+│       ├── Dockerfile*
+│       ├── railway*.toml
+│       └── nixpacks.toml
+├── scripts/                      # Scripts and automation
+│   ├── setup/                    # Setup scripts
+│   │   ├── setup-claude-desktop.sh
+│   │   └── start.sh
+│   ├── testing/                  # Test scripts
+│   │   ├── test-*.js
+│   │   └── test-*.sh
+│   └── deployment/               # Deployment scripts
+│       └── deploy-to-railway.sh
+├── docs/                         # Documentation
+│   ├── setup/                    # Setup guides
+│   ├── deployment/               # Deployment guides
+│   └── api/                      # API documentation
+├── examples/                     # Example configurations
+│   └── n8n-workflow-example.json
+├── tests/                        # Test suites
+│   ├── helpers/
+│   └── *.spec.ts
+├── index.ts                      # Main entry point
+├── package.json
+├── tsconfig.json
+└── playwright.config.ts
 ```
 
-## Deployment
+## 🚀 Quick Start
 
-### Railway
+### Prerequisites
 
-1. Connect your repository to Railway
-2. Railway will automatically detect the configuration from `railway.toml`
-3. Set environment variables if needed
-4. Deploy
+- Node.js 18+ 
+- npm or yarn
+- Playwright browsers installed
 
-### Docker
-
-```bash
-docker build -t playwright-mcp-server .
-docker run -p 3000:3000 -e MODE=http playwright-mcp-server
-```
-
-### Local Development
+### Installation
 
 ```bash
 npm install
+npx playwright install
+```
+
+### Running the Server
+
+#### Stdio Mode (for MCP clients)
+```bash
 npm run dev
+# or
+MODE=stdio npx tsx index.ts
 ```
 
-## Testing
-
-This project includes comprehensive Playwright tests with advanced assertions for browser automation and MCP server functionality.
-
-### Test Structure
-
-- **`tests/mcp-server.spec.ts`** - MCP server HTTP endpoints and basic functionality
-- **`tests/browser-automation.spec.ts`** - Direct Playwright browser automation tests
-- **`tests/mcp-integration.spec.ts`** - Integration tests combining MCP tools
-- **`tests/advanced-assertions.spec.ts`** - Advanced Playwright assertions and patterns
-- **`tests/helpers/test-utils.ts`** - Utility functions for common test operations
-
-### Running Tests
-
+#### HTTP Mode (for web access)
 ```bash
-# Install dependencies
-npm install
-
-# Run all tests
-npm test
-
-# Run tests in headed mode (see browser)
-npm run test:headed
-
-# Run tests with UI mode
-npm run test:ui
-
-# Debug tests
-npm run test:debug
-
-# Show test report
-npm run test:report
+MODE=http npx tsx index.ts
+# or
+PORT=3000 npx tsx index.ts
 ```
 
-### Key Playwright Assertions
+### Available Scripts
 
-The test suite demonstrates comprehensive Playwright assertions including:
+- `npm run dev` - Start in development mode (stdio)
+- `npm run build` - Build TypeScript to JavaScript
+- `npm start` - Start production server
+- `npm test` - Run Playwright tests
+- `npm run migrate` - Run database migrations
+- `npm run migrate:status` - Check migration status
 
-- **Page Assertions**: `toHaveTitle()`, `toHaveURL()`, `toContainText()`
-- **Element Assertions**: `toBeVisible()`, `toHaveText()`, `toHaveValue()`, `toBeChecked()`
-- **Form Assertions**: `toHaveValue()`, `toBeSelected()`, `toBeValid()`
-- **Screenshot Assertions**: Image validation and size verification
-- **Network Assertions**: Response status, timing, and performance
-- **Stream Assertions**: Server-Sent Events validation
-- **Browser State Assertions**: Health checks and state verification
+## 🔧 Configuration
 
-### Test Configuration
+### Environment Variables
 
-Tests are configured in `playwright.config.ts` with:
-- Multiple browser support (Chrome, Firefox, Safari)
-- Mobile viewport testing
-- Automatic server startup
-- Screenshot and video capture on failure
-- Trace collection for debugging
+- `MODE` - Server mode: `stdio` or `http` (default: `stdio`)
+- `PORT` - HTTP server port (default: `3000`)
+- `PLAYWRIGHT_MCP_AUTH_TOKEN` - Authentication token for HTTP mode
 
-## Environment Variables
+### MCP Client Configuration
 
-- `MODE` - Server mode: "stdio" (default) or "http"
-- `PORT` - HTTP server port (default: 3000)
+Add to your MCP client configuration:
 
-## Architecture
+```json
+{
+  "playwright-mcp": {
+    "command": "node",
+    "args": ["/path/to/playwrightMCP/dist/index.js"],
+    "cwd": "/path/to/playwrightMCP",
+    "env": {
+      "MODE": "stdio"
+    }
+  }
+}
+```
 
-The server supports two modes:
-- **stdio mode**: Traditional MCP server communication
-- **http mode**: REST API with streaming support for web integration
+## 🛠️ Development
+
+### Project Structure Philosophy
+
+- **Core**: Essential server functionality and MCP protocol implementation
+- **Adapters**: Different ways to expose the server (HTTP, Railway, etc.)
+- **Clients**: MCP client implementations for testing
+- **Monitoring**: Health checks, keep-alive, and monitoring tools
+- **Config**: Environment-specific and deployment configurations
+- **Scripts**: Automation and utility scripts organized by purpose
+- **Docs**: Comprehensive documentation organized by topic
+
+### Adding New Features
+
+1. **Core functionality**: Add to `src/core/`
+2. **New adapters**: Add to `src/adapters/`
+3. **Client tools**: Add to `src/clients/`
+4. **Monitoring**: Add to `src/monitoring/`
+5. **Types**: Add to `src/types/`
+6. **Utilities**: Add to `src/utils/`
+
+## 📚 Documentation
+
+- [Setup Guide](docs/setup/) - Detailed setup instructions
+- [Deployment Guide](docs/deployment/) - Deployment to various platforms
+- [API Documentation](docs/api/) - API reference and examples
+
+## 🤝 Contributing
+
+1. Follow the established folder structure
+2. Add appropriate documentation
+3. Include tests for new features
+4. Update this README if adding new top-level directories
+
+## 📄 License
+
+[Add your license information here]

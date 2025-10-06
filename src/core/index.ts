@@ -1,35 +1,15 @@
-#!/usr/bin/env node
-
 import { PlaywrightMCPServer } from "./server.js";
-import { HTTPPlaywrightServer } from "./http-server.js";
+import { HTTPPlaywrightServer } from "../adapters/http-server.js";
 import { MCPHTTPPlaywrightServer } from "./mcp-http-server.js";
 
-// Determine mode - if Railway provides PORT, we should be in HTTP mode
-const portEnv = process.env["PORT"];
-const explicitMode = process.env["MODE"];
-const mode = explicitMode || (portEnv ? "http" : "stdio");
-const port = portEnv ? Number.parseInt(portEnv, 10) : 3000;
-
-console.log(`🔍 Mode Detection:`);
-console.log(`  PORT env: "${portEnv}"`);
-console.log(`  MODE env: "${explicitMode}"`);
-console.log(`  Detected mode: "${mode}"`);
-
-// Validate port
-if (isNaN(port) || port < 1 || port > 65535) {
-  console.error(`❌ Invalid port: ${portEnv} (parsed as ${port})`);
-  process.exit(1);
-}
-
-async function main() {
-  console.log(`🚀 Starting Playwright MCP Server...`);
-  console.log(`Mode: ${mode}, Port: ${port}`);
-  console.log(`Raw PORT env: "${process.env["PORT"]}"`);
-  console.log(`All PORT-related env vars:`, Object.keys(process.env).filter(k => k.includes('PORT')));
+export async function startServer(mode: string, port: number): Promise<void> {
+  console.log(`Raw PORT env: "${process.env.PORT}"`);
+  console.log('All PORT-related env vars:', Object.keys(process.env).filter(k => k.includes('PORT')));
   console.log(`Node version: ${process.version}`);
   console.log(`Platform: ${process.platform} ${process.arch}`);
 
   // Safety check: If we have a PORT but mode isn't http, something's wrong
+  const portEnv = process.env.PORT;
   if (portEnv && mode !== "http") {
     console.warn(`⚠️ WARNING: PORT provided (${portEnv}) but mode is ${mode}. Forcing HTTP mode for Railway compatibility.`);
     const httpServer = new MCPHTTPPlaywrightServer(port);
@@ -66,7 +46,26 @@ async function main() {
   }
 }
 
-main().catch((error) => {
-  console.error("Failed to start server:", error);
-  process.exit(1);
-});
+// CLI execution (for backward compatibility)
+if (process.argv[1] && process.argv[1].endsWith('index.ts')) {
+  const portEnv = process.env.PORT;
+  const explicitMode = process.env.MODE;
+  const mode = explicitMode || (portEnv ? "http" : "stdio");
+  const port = portEnv ? Number.parseInt(portEnv, 10) : 3000;
+
+  console.log('🔍 Mode Detection:');
+  console.log(`  PORT env: "${portEnv}"`);
+  console.log(`  MODE env: "${explicitMode}"`);
+  console.log(`  Detected mode: "${mode}"`);
+
+  // Validate port
+  if (Number.isNaN(port) || port < 1 || port > 65535) {
+    console.error(`❌ Invalid port: ${portEnv} (parsed as ${port})`);
+    process.exit(1);
+  }
+
+  startServer(mode, port).catch((error) => {
+    console.error("Failed to start server:", error);
+    process.exit(1);
+  });
+}
