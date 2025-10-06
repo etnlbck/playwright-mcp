@@ -32,36 +32,47 @@ export function getDatabaseConfig(): DatabaseConfig {
   return config;
 }
 
-// Create database connection
-let sqlInstance: ReturnType<typeof postgres> | null = null;
+// Database connection manager to avoid global mutable state
+export class DatabaseConnectionManager {
+  private sqlInstance: ReturnType<typeof postgres> | null = null;
 
-export function getDatabase() {
-  if (!sqlInstance) {
-    const config = getDatabaseConfig();
-    
-    console.log('🔌 Connecting to PostgreSQL database:', {
-      host: config.host,
-      port: config.port,
-      database: config.database,
-      username: config.username,
-      ssl: config.ssl,
-      max: config.max,
-    });
+  getDatabase() {
+    if (!this.sqlInstance) {
+      const config = getDatabaseConfig();
 
-    sqlInstance = postgres({
-      ...config,
-      transform: {
-        ...postgres.camel, // Convert snake_case to camelCase
-        undefined: null,   // Transform undefined to null
-      },
-      onnotice: process.env.NODE_ENV === 'development' ? console.log : false,
-      debug: process.env.NODE_ENV === 'development' ? console.log : false,
-    });
+      console.log('🔌 Connecting to PostgreSQL database:', {
+        host: config.host,
+        port: config.port,
+        database: config.database,
+        username: config.username,
+        ssl: config.ssl,
+        max: config.max,
+      });
+
+      this.sqlInstance = postgres({
+        ...config,
+        transform: {
+          ...postgres.camel, // Convert snake_case to camelCase
+          undefined: null,   // Transform undefined to null
+        },
+        onnotice: process.env.NODE_ENV === 'development' ? console.log : false,
+        debug: process.env.NODE_ENV === 'development' ? console.log : false,
+      });
+    }
+    return this.sqlInstance;
   }
 
-  return sqlInstance;
+  // Optional: method to close the connection
+  async close() {
+    if (this.sqlInstance) {
+      await this.sqlInstance.end({ timeout: 5 });
+      this.sqlInstance = null;
+    }
+  }
 }
 
+// Optionally, export a default manager instance if needed
+// export const dbManager = new DatabaseConnectionManager();
 // Close database connection
 export async function closeDatabase() {
   if (sqlInstance) {
